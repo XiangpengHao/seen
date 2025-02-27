@@ -45,8 +45,24 @@ async fn process_update(env: Env, update: Update) -> Result<()> {
                 "/list" => get_link_stats(env).await?,
                 _ if text.starts_with("/echo ") => text[6..].to_string(),
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
-                    handle_link(env, &text).await?;
-                    "I received your link! Here's what you sent me: ".to_string() + &text
+                    // Get detailed information from handle_link
+                    let link_info = handle_link(env, &text).await?;
+                    
+                    format!(
+                        "✅ Link saved successfully!\n\n\
+                        URL: {}\n\
+                        Type: {} {}\n\
+                        Size: {}\n\
+                        Saved: {}\n\
+                        Bucket Path: {}\n\n\
+                        Use /list to see all saved links.",
+                        text,
+                        link_info.type_emoji,
+                        link_info.content_type,
+                        format_size(link_info.size),
+                        link_info.timestamp,
+                        link_info.bucket_path
+                    )
                 },
                 _ => "I don't understand that command. Try /help for a list of available commands.".to_string()
             };
@@ -59,74 +75,113 @@ async fn process_update(env: Env, update: Update) -> Result<()> {
     Ok(())
 }
 
-async fn handle_link(env: Env, link: &str) -> Result<()> {
-    let link_id = uuid::Uuid::new_v4().to_string();
+// Create a structure to return information about the saved link
+#[derive(Debug)]
+struct LinkInfo {
+    content_type: String,
+    type_emoji: String,
+    size: usize,
+    timestamp: String,
+    bucket_path: String,
+}
 
+async fn handle_link(env: Env, link: &str) -> Result<LinkInfo> {
+    // Generate a unique ID for this link
+    let link_id = uuid::Uuid::new_v4().to_string();
+    
+    // Set up better request headers
     let mut headers = Headers::new();
     headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")?;
-    headers.set(
-        "Accept",
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    )?;
+    headers.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")?;
     headers.set("Accept-Language", "en-US,en;q=0.5")?;
-
+    
+    // Create request with headers
     let mut req_init = RequestInit::new();
     req_init.with_method(Method::Get).with_headers(headers);
-
+    
+    // Make request with proper headers
     let request = Request::new_with_init(link, &req_init)?;
     let mut response = Fetch::Request(request).send().await?;
-
+    
     if response.status_code() != 200 {
-        return Err(Error::from(format!(
-            "Failed to fetch link: Status {}",
-            response.status_code()
-        )));
+        return Err(Error::from(format!("Failed to fetch link: Status {}", response.status_code())));
     }
-
+    
+    // Get content type from headers
     let content_type = response
         .headers()
         .get("Content-Type")
         .unwrap_or_else(|_| Some("application/octet-stream".to_string()))
         .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let extension = match content_type.as_str().split(';').next().unwrap_or("") {
-        "text/html" => "html",
-        "application/pdf" => "pdf",
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "application/json" => "json",
-        "text/plain" => "txt",
-        "text/css" => "css",
-        "text/javascript" | "application/javascript" => "js",
-        "application/xml" | "text/xml" => "xml",
-        _ => "bin",
+    
+    // Determine file extension and emoji based on content type
+    let (extension, type_emoji) = match content_type.as_str().split(';').next().unwrap_or("") {
+        "text/html" => ("html", "🌐"),
+        "application/pdf" => ("pdf", "📄"),
+        "image/jpeg" => ("jpg", "🖼️"),
+        "image/png" => ("png", "🖼️"),
+        "image/gif" => ("gif", "🖼️"),
+        "application/json" => ("json", "📋"),
+        "text/plain" => ("txt", "📝"),
+        "text/css" => ("css", "🎨"),
+        "text/javascript" | "application/javascript" => ("js", "📜"),
+        "application/xml" | "text/xml" => ("xml", "📰"),
+        _ => ("bin", "📁")  // Default binary extension for unknown types
     };
-
+    
+    // Generate bucket path with appropriate extension
     let bucket_path = format!("content/{}.{}", link_id, extension);
-
+    
+    // Get content as bytes
     let content = response.bytes().await?;
-
-    // Get R2 bucket and store original content
+    let content_size = content.len();
+    
+    // Get current timestamp
+    let current_time = js_sys::Date::new_0().to_iso_string().as_string().unwrap();
+    
+    // Get R2 bucket and store content
     let bucket = env.bucket("SEEN_BUCKET")?;
-    bucket.put(&bucket_path, content.clone()).execute().await?;
-
+    bucket.put(&bucket_path, content).execute().await?;
+    
     // Store link info in D1 database
     let d1 = env.d1("SEEN_DB")?;
-
+    
     // Insert with bucket path and content type
     let stmt = d1
-        .prepare("INSERT INTO links (url, created_at, bucket_path, content_type) VALUES (?, datetime('now'), ?, ?)")
+        .prepare("INSERT INTO links (url, created_at, bucket_path, content_type, size) VALUES (?, datetime('now'), ?, ?, ?)")
         .bind(&[
             JsValue::from_str(link),
             JsValue::from_str(&bucket_path),
             JsValue::from_str(&content_type),
+            JsValue::from_f64(content_size as f64),
         ])?;
-
+    
     // Execute query
     stmt.run().await?;
+    
+    // Create information structure to return
+    let link_info = LinkInfo {
+        content_type: content_type.clone(),
+        type_emoji: type_emoji.to_string(),
+        size: content_size,
+        timestamp: current_time.clone(),
+        bucket_path: bucket_path.clone(),
+    };
+    
+    Ok(link_info)
+}
 
-    Ok(())
+// Helper function to format file sizes
+fn format_size(size: usize) -> String {
+    if size < 1024 {
+        format!("{} bytes", size)
+    } else if size < 1024 * 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else if size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
 }
 
 async fn get_link_stats(env: Env) -> Result<String> {
