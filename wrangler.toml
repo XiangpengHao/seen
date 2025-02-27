@@ -4,3 +4,12 @@ compatibility_date = "2025-02-26"
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
+
+[[d1_databases]]
+binding = "SEEN_DB"
+database_name = "seen"
+database_id = "a221f142-b966-4f92-98fa-ff9739f4d2fd"
+
+[observability]
+enabled = true
+head_sampling_rate = 0.1 # 10% of requests are logged
