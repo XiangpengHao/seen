@@ -9,7 +9,7 @@ const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 /// Processes an update from Telegram webhook
 pub async fn process_update(env: Env, update: Update) -> Result<()> {
     let token = env.secret(BOT_TOKEN)?.to_string();
-    
+
     // Check if the update contains a message with text
     if let Some(message) = update.message {
         if let Some(text) = message.text {
@@ -33,7 +33,6 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
                     // Get detailed information from handle_link
                     let link_info = crate::handlers::handle_link(env, &text).await?;
-                    
                     format!(
                         "✅ Link saved successfully!\n\n\
                         URL: {}\n\
@@ -92,4 +91,4 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     }
 
     Ok(())
-} 
+}

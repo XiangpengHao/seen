@@ -4,7 +4,7 @@ pub fn extract_text_from_html(html: &str) -> String {
     // This is a basic implementation; for production, consider a more robust HTML parser
     let no_tags = html.replace("<[^>]*>", " ");
     let no_extra_spaces = no_tags.replace("\\s+", " ");
-    
+
     // Limit text length to prevent issues with too large vectors
     // Workers AI might have limits on input size
     if no_extra_spaces.len() > 32000 {
@@ -51,6 +51,6 @@ pub fn get_extension_from_content_type(content_type: &str) -> &'static str {
         "text/css" => "css",
         "text/javascript" | "application/javascript" => "js",
         "application/xml" | "text/xml" => "xml",
-        _ => "bin"  // Default binary extension for unknown types
+        _ => "bin", // Default binary extension for unknown types
     }
-} 
+}

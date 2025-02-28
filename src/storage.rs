@@ -11,7 +11,7 @@ pub async fn get_link_stats(env: Env) -> Result<String> {
     let count_result = count_stmt.run().await?;
 
     let rows = count_result.results::<serde_json::Value>()?;
-    let count = if let Some(row) = rows.get(0) {
+    let count = if let Some(row) = rows.first() {
         row.get("COUNT(*)").and_then(|v| v.as_u64()).unwrap_or(0)
     } else {
         0
@@ -71,38 +71,42 @@ pub async fn get_link_stats(env: Env) -> Result<String> {
 /// Retrieve a link by its ID from the database
 pub async fn get_link_by_id(env: &Env, link_id: &str) -> Result<LinkInfoWithURL> {
     let d1 = env.d1("SEEN_DB")?;
-    
+
     // Query database to get link info by bucket_path that contains the link_id
     let stmt = d1
         .prepare("SELECT url, created_at, bucket_path, content_type, size, title FROM links WHERE bucket_path LIKE ?")
         .bind(&[JsValue::from_str(&format!("%{}%", link_id))])?;
-    
+
     let result = stmt.run().await?;
     let rows = result.results::<Value>()?;
-    
-    if let Some(row) = rows.get(0) {
-        let url = row.get("url")
+
+    if let Some(row) = rows.first() {
+        let url = row
+            .get("url")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown URL")
             .to_string();
-        
-        let title = row.get("title")
+
+        let title = row
+            .get("title")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        
-        let content_type = row.get("content_type")
+
+        let content_type = row
+            .get("content_type")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown type")
             .to_string();
-        
-        let bucket_path = row.get("bucket_path")
+
+        let bucket_path = row
+            .get("bucket_path")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        
+
         // Format file type emoji based on content type
         let type_emoji = format_type_emoji(content_type.split(';').next().unwrap_or(""));
-        
+
         return Ok(LinkInfoWithURL {
             url,
             title,
@@ -111,7 +115,7 @@ pub async fn get_link_by_id(env: &Env, link_id: &str) -> Result<LinkInfoWithURL>
             bucket_path,
         });
     }
-    
+
     Err(Error::from(format!("Link with ID {} not found", link_id)))
 }
 
@@ -124,15 +128,15 @@ pub async fn save_to_bucket(env: &Env, bucket_path: &str, content: Vec<u8>) -> R
 
 /// Save link metadata to database
 pub async fn save_link_to_db(
-    env: &Env, 
-    url: &str, 
-    bucket_path: &str, 
-    content_type: &str, 
+    env: &Env,
+    url: &str,
+    bucket_path: &str,
+    content_type: &str,
     size: usize,
-    title: Option<&str>
+    title: Option<&str>,
 ) -> Result<()> {
     let d1 = env.d1("SEEN_DB")?;
-    
+
     // Insert with bucket path and content type
     let stmt = d1
         .prepare("INSERT INTO links (url, created_at, bucket_path, content_type, size, title) VALUES (?, datetime('now'), ?, ?, ?, ?)")
@@ -143,7 +147,7 @@ pub async fn save_link_to_db(
             JsValue::from_f64(size as f64),
             if let Some(t) = title { JsValue::from_str(t) } else { JsValue::null() },
         ])?;
-    
+
     // Execute query
     stmt.run().await?;
     Ok(())
@@ -158,4 +162,4 @@ pub fn format_type_emoji(content_type: &str) -> &'static str {
         "text/plain" => "📝",
         _ => "📁",
     }
-} 
+}
