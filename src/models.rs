@@ -42,15 +42,15 @@ pub struct EmbeddingResult {
 #[derive(Serialize, Deserialize)]
 pub struct VectorMetadata {
     pub url: String,
-    pub title: Option<String>,
-    pub bucket_path: String,
-    pub content_type: String,
+    pub chunk_id: u64,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct VectorQueryRequest {
     pub vector: Vec<f32>,
     pub top_k: usize,
+    pub return_metadata: String,
 }
 
 #[derive(Deserialize)]
@@ -71,6 +71,7 @@ pub struct VectorMatch {
     pub id: String,
     #[allow(dead_code)]
     pub score: f32,
+    pub metadata: VectorMetadata,
 }
 
 // ===== Link Models =====
@@ -81,11 +82,14 @@ pub struct LinkInfo {
     pub size: usize,
     pub timestamp: String,
     pub bucket_path: String,
+    pub num_chunks: usize,
+    pub summary: String,
 }
 
 #[derive(Debug)]
 pub struct LinkInfoWithURL {
     pub url: String,
+    pub id: String,
     pub title: String,
     pub content_type: String,
     pub type_emoji: String,

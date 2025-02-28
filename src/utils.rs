@@ -1,20 +1,13 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
+use serde::{Deserialize, Serialize};
 use worker::*;
 
-/// Extracts text from HTML content
-pub fn extract_text_from_html(html: &str) -> String {
-    // Simple HTML text extraction: remove tags and excessive whitespace
-    // This is a basic implementation; for production, consider a more robust HTML parser
-    let no_tags = html.replace("<[^>]*>", " ");
-    let no_extra_spaces = no_tags.replace("\\s+", " ");
-
-    // Limit text length to prevent issues with too large vectors
-    // Workers AI might have limits on input size
-    if no_extra_spaces.len() > 32000 {
-        no_extra_spaces[0..32000].to_string()
-    } else {
-        no_extra_spaces
-    }
+/// Structured data returned from Gemini API for link processing
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ProcessedLinkData {
+    pub title: String,
+    pub summary: String,
+    pub chunks: Vec<String>,
 }
 
 /// Helper function to format file sizes
@@ -28,17 +21,6 @@ pub fn format_size(size: usize) -> String {
     } else {
         format!("{:.1} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
     }
-}
-
-/// Extract title from HTML content
-pub fn extract_title_from_html(html: &str) -> Option<String> {
-    if let Some(title_match) = html.match_indices("<title>").next() {
-        let start_idx = title_match.0 + 7; // "<title>" is 7 chars
-        if let Some(end_idx) = html[start_idx..].find("</title>") {
-            return Some(html[start_idx..(start_idx + end_idx)].trim().to_string());
-        }
-    }
-    None
 }
 
 /// Helper function to determine file extension based on content type
@@ -62,7 +44,8 @@ pub fn get_extension_from_content_type(content_type: &str) -> &'static str {
 async fn gemini_api_request(
     env: &Env,
     prompt: &str,
-    content: Option<(&str, &[u8])>,
+    inline_content: Option<(&str, &[u8])>,
+    response_schema: Option<serde_json::Value>,
 ) -> Result<String> {
     let api_key = env.secret("GEMINI_API_KEY")?.to_string();
     let api_url = format!(
@@ -76,7 +59,7 @@ async fn gemini_api_request(
     })];
 
     // Add binary content if provided
-    if let Some((mime_type, data)) = content {
+    if let Some((mime_type, data)) = inline_content {
         parts.push(serde_json::json!({
             "inline_data": {
                 "mime_type": mime_type,
@@ -86,12 +69,19 @@ async fn gemini_api_request(
     }
 
     // Create the request payload
-    let payload = serde_json::json!({
+    let mut payload = serde_json::json!({
         "contents": [{
             "role": "user",
             "parts": parts
         }],
     });
+
+    if let Some(response_schema) = response_schema {
+        payload["generationConfig"] = serde_json::json!({
+            "responseMimeType": "application/json",
+            "responseSchema": response_schema
+        });
+    }
 
     // Make the request
     let mut headers = Headers::new();
@@ -132,22 +122,55 @@ async fn gemini_api_request(
         .ok_or_else(|| Error::from("Failed to parse Gemini API response"))
 }
 
-/// Extract text from PDF content using Gemini API
-pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) -> Result<String> {
-    gemini_api_request(
-        env,
-        "Extract the content from this PDF document to markdown format. If there is a figure, extract the text from the figure and describe it in the markdown. The result should be suitable for RAG pipeline. Return only the extracted text, no additional commentary.",
-        Some(("application/pdf", pdf_content)),
-    ).await
-}
+/// Process a link with Gemini API and return structured data
+pub async fn chunk_and_summary_link(env: &Env, link: &str) -> Result<ProcessedLinkData> {
+    let prompt = format!(
+        "OCR/convert the following page into Markdown. Tables should be formatted as markdown tables. \
+        Figures should be described in the text, text in the figures should be extracted. \
+        Do not surround your output with triple backticks. \
+        Chunk the document into sections of roughly 500 - 1000 words. Our goal is to identify parts of the page with same semantic \
+        theme. These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
+        You should generate a two sentence summary of the document, with dense and concise brief, \
+        output in the summary field.\n\n\
+        You should read the original title of the document, and if not present, you should generate one based on the data. output in the title field.\n\n\
+        {}",
+        link
+    );
 
-/// Generate a summary of content using Gemini API
-pub async fn generate_summary_with_gemini(env: &Env, text: &str) -> Result<String> {
-    gemini_api_request(
-        env,
-        &format!("Summarize the following text in exactly 1 dense sentences, as the preview of the content. Be concise and to the point. \n{} ", text),
-        None,
-    ).await
+    let schema = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string"
+            },
+            "chunks": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                }
+            },
+            "title": {
+                "type": "string"
+            }
+        },
+        "required": [
+            "summary",
+            "chunks",
+            "title"
+        ]
+    });
+
+    let response_text = gemini_api_request(env, &prompt, None, Some(schema)).await?;
+
+    // Parse the response into our structured type
+    let data: ProcessedLinkData = serde_json::from_str(&response_text).map_err(|e| {
+        Error::from(format!(
+            "Failed to parse Gemini response into structured data: {}",
+            e
+        ))
+    })?;
+
+    Ok(data)
 }
 
 /// Fetch content from a URL

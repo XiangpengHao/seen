@@ -25,3 +25,7 @@ index_name = "seen-index"
 
 [ai]
 binding = "AI"
+
+[[kv_namespaces]]
+binding = "SEEN_KV"
+id = "a86e7def7d384342bcd7b1c490a3bfbd"

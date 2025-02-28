@@ -30,15 +30,17 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                                 Type: {} {}\n\
                                 Size: {}\n\
                                 Saved: {}\n\
-                                Bucket Path: {}\n\n\
-                                Use /list to see all saved links.\n\
-                                Use /search <query> to search through saved content.",
+                                Bucket Path: {}\n\
+                                Chunks: {}\n\
+                                Summary: {}\n",
                                 text,
                                 link_info.type_emoji,
                                 link_info.content_type,
                                 crate::utils::format_size(link_info.size),
                                 link_info.timestamp,
-                                link_info.bucket_path
+                                link_info.bucket_path,
+                                link_info.num_chunks,
+                                link_info.summary
                             )
                         }
                         Err(e) => {
@@ -54,11 +56,23 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                     if query.trim().is_empty() {
                         "Please provide a search query, e.g., '/search cloudflare'".to_string()
                     } else {
-                        crate::handlers::search_links(env, query).await?
+                        match crate::handlers::search_links(env, query).await {
+                            Ok(response) => response,
+                            Err(e) => {
+                                console_error!("Error searching links: {}", e);
+                                format!("Error searching links: {}", e)
+                            }
+                        }
                     }
                 },
                 _ => {
-                    crate::handlers::search_links(env, &text).await?
+                    match crate::handlers::search_links(env, &text).await {
+                        Ok(response) => response,
+                        Err(e) => {
+                            console_error!("Error searching links: {}", e);
+                            format!("Error searching links: {}", e)
+                        }
+                    }
                 }
             };
 

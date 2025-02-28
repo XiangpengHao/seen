@@ -82,6 +82,7 @@ pub async fn get_link_by_id(env: &Env, id: &str) -> Result<LinkInfoWithURL> {
         let type_emoji = format_type_emoji(&row.content_type);
 
         Ok(LinkInfoWithURL {
+            id: id.to_string(),
             url: row.url,
             title: row.title.unwrap_or("No title available".to_string()),
             content_type: row.content_type,
@@ -172,6 +173,7 @@ pub async fn find_link_by_url(env: &Env, url: &str) -> Result<LinkInfoWithURL> {
         let type_emoji = format_type_emoji(&row.content_type);
 
         Ok(LinkInfoWithURL {
+            id: row.id,
             url: row.url,
             title: row.title,
             content_type: row.content_type,
@@ -189,6 +191,7 @@ pub async fn find_link_by_url(env: &Env, url: &str) -> Result<LinkInfoWithURL> {
 // Add this struct to handle the query result
 #[derive(Deserialize)]
 struct ExistingLinkRow {
+    id: String,
     url: String,
     title: String,
     content_type: String,

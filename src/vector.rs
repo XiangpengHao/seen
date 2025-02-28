@@ -1,4 +1,6 @@
-use crate::models::{EmbeddingRequest, EmbeddingResponse, VectorQueryRequest, VectorQueryResponse};
+use crate::models::{
+    EmbeddingRequest, EmbeddingResponse, VectorMetadata, VectorQueryRequest, VectorQueryResponse,
+};
 use serde_json::json;
 use worker::*;
 
@@ -8,13 +10,6 @@ const CF_API_TOKEN: &str = "CF_API_TOKEN";
 const VECTORIZE_INDEX_NAME: &str = "seen-index";
 const WORKERS_AI_API_URL: &str =
     "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/baai/bge-base-en-v1.5";
-
-/// Struct to organize vector metadata for insertion
-pub struct VectorMetadata<'a> {
-    pub link_id: &'a str,
-    pub url: &'a str,
-    pub bucket_path: &'a str,
-}
 
 /// Generates embeddings for text using Workers AI
 pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
@@ -59,7 +54,8 @@ pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
 /// Inserts a vector into the Vectorize index
 pub async fn insert_vector(
     env: &Env,
-    metadata: VectorMetadata<'_>,
+    id: &str,
+    metadata: VectorMetadata,
     values: Vec<f32>,
 ) -> Result<()> {
     let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
@@ -72,12 +68,9 @@ pub async fn insert_vector(
 
     // Create a vector object in JSON format
     let vector_obj = json!({
-        "id": metadata.link_id.to_string(),
+        "id": id.to_string(),
         "values": values,
-        "metadata": {
-            "url": metadata.url.to_string(),
-            "bucket_path": metadata.bucket_path.to_string(),
-        }
+        "metadata": metadata
     });
 
     let ndjson = serde_json::to_string(&vector_obj)?;
@@ -100,15 +93,16 @@ pub async fn insert_vector(
         return Err(Error::from("Failed to insert vector"));
     }
 
-    console_log!(
-        "Vector inserted successfully for link ID: {}",
-        metadata.link_id
-    );
+    console_log!("Vector inserted successfully for link ID: {}", id);
     Ok(())
 }
 
-/// Queries the Vectorize index for similar vectors
-pub async fn query_vectors(env: &Env, query_text: &str, top_k: usize) -> Result<Vec<String>> {
+/// Queries the Vectorize index for similar vectors and returns IDs, scores, and metadata
+pub async fn query_vectors_with_scores(
+    env: &Env,
+    query_text: &str,
+    top_k: usize,
+) -> Result<Vec<(String, f32, VectorMetadata)>> {
     let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
     let api_token = env.secret(CF_API_TOKEN)?.to_string();
 
@@ -120,10 +114,10 @@ pub async fn query_vectors(env: &Env, query_text: &str, top_k: usize) -> Result<
         account_id, VECTORIZE_INDEX_NAME
     );
 
-    // Simplify query to just get IDs
     let query_req = VectorQueryRequest {
         vector: query_vector,
         top_k,
+        return_metadata: "all".to_string(),
     };
 
     let mut headers = Headers::new();
@@ -154,11 +148,11 @@ pub async fn query_vectors(env: &Env, query_text: &str, top_k: usize) -> Result<
         ));
     }
 
-    // Just return the vector IDs
+    // Return vector IDs with scores and metadata
     Ok(query_response
         .result
         .matches
-        .iter()
-        .map(|m| m.id.clone())
+        .into_iter()
+        .map(|m| (m.id, m.score, m.metadata))
         .collect())
 }
