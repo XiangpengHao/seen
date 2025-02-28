@@ -1,7 +1,7 @@
 use worker::*;
+mod d1;
 mod handlers;
 mod models;
-mod storage;
 mod telegram;
 mod utils;
 mod vector;
@@ -18,7 +18,6 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     match path {
         "/" => Response::ok("Telegram Bot is running!"),
         "/webhook" => handlers::handle_webhook(req, env).await,
-        "/link" => handlers::handle_link_request(req, env).await,
         _ => Response::error("Not Found", 404),
     }
 }

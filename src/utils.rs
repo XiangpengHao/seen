@@ -132,8 +132,9 @@ pub async fn chunk_and_summary_link(env: &Env, link: &str) -> Result<ProcessedLi
         theme. These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
         You should generate a two sentence summary of the document, with dense and concise brief, \
         output in the summary field.\n\n\
-        You should read the original title of the document, and if not present, you should generate one based on the data. output in the title field.\n\n\
-        {}",
+        You should read the original title of the document, and if not present, you should generate one based on the data. output in the title field.\n
+        You should download the content of the link and use it to generate the summary and title, be careful and don't hallucinate.\n\n\
+        Link: {}",
         link
     );
 

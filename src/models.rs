@@ -41,8 +41,8 @@ pub struct EmbeddingResult {
 
 #[derive(Serialize, Deserialize)]
 pub struct VectorMetadata {
-    pub url: String,
     pub chunk_id: u64,
+    pub document_id: String,
 }
 
 #[derive(Serialize)]
@@ -72,29 +72,4 @@ pub struct VectorMatch {
     #[allow(dead_code)]
     pub score: f32,
     pub metadata: VectorMetadata,
-}
-
-// ===== Link Models =====
-#[derive(Debug)]
-pub struct LinkInfo {
-    pub content_type: String,
-    pub type_emoji: String,
-    pub size: usize,
-    pub timestamp: String,
-    pub bucket_path: String,
-    pub num_chunks: usize,
-    pub summary: String,
-}
-
-#[derive(Debug)]
-pub struct LinkInfoWithURL {
-    pub url: String,
-    pub id: String,
-    pub title: String,
-    pub content_type: String,
-    pub type_emoji: String,
-    pub bucket_path: String,
-    pub summary: String,
-    pub size: usize,
-    pub created_at: String,
 }

@@ -1,13 +1,13 @@
-# Telegram Bot on Cloudflare Workers
+# Seen 
 
-This project implements a simple Telegram bot running on Cloudflare Workers using Rust and WebAssembly. The bot can respond to basic commands like `/start`, `/help`, and `/echo`.
+Personal knowledge management for the impatient.
+
+Read something but forget where it was? Seen remembers what you have seen.
 
 ## Features
 
-- Written in Rust, compiled to WebAssembly, running on Cloudflare Workers
-- Handles Telegram webhook events
-- Responds to basic commands
-- Easily extendable to add more functionality
+- Dead simple, just send a link, and search later from whatever you still remember.
+- Even more impatient? Install Seen as a browser extension and save any webpage you browse.
 
 ## Setup Instructions
 
@@ -66,39 +66,14 @@ You should see a response like:
 {"ok":true,"result":true,"description":"Webhook was set"}
 ```
 
-## Bot Commands
 
-The bot responds to the following commands:
 
-- `/start` - Displays a welcome message
-- `/help` - Shows a list of available commands
-- `/echo <text>` - Echoes back the text you send
+## Development
+### Add a new column to the table:
+```SQL
+ALTER TABLE links ADD COLUMN chunk_count INTEGER DEFAULT 0;
+```
 
-## Customizing the Bot
-
-To add more commands or functionality, modify the `process_update` function in `src/lib.rs`. You can extend the match statement to handle additional commands or implement more complex behaviors.
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Deployment Errors**: If you encounter compilation errors, make sure you're using compatible dependencies for WebAssembly. The current implementation uses minimal dependencies to ensure compatibility.
-
-2. **Webhook Setup**: If your bot isn't responding to messages, verify your webhook is set up correctly:
-   ```
-   https://api.telegram.org/bot<BOT_TOKEN>/getWebhookInfo
-   ```
-
-3. **Logs**: Check the Cloudflare Workers logs for any errors:
-   ```bash
-   wrangler tail
-   ```
-
-### Still Having Issues?
-
-- Ensure your Cloudflare Workers account is properly set up
-- Double-check that your bot token is correctly stored as a secret
-- Verify that your webhook URL is accessible from the internet
 
 ## License
 

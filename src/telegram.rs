@@ -1,4 +1,4 @@
-use crate::models::Update;
+use crate::{d1::DocInfo, models::Update};
 use serde_json::json;
 use worker::*;
 
@@ -19,28 +19,15 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
             let response = match text.as_str() {
                 "/start" => "Hello! I'm your Telegram bot running on Cloudflare Workers with Rust!".to_string(),
                 "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\nOr simply send a URL to save it, or any text to search for it.".to_string(),
-                "/list" => crate::storage::get_link_stats(env).await?,
+                "/list" => list_links(env).await,
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
                     // Get detailed information from handle_link
                     match crate::handlers::handle_link(&env, &text).await {
                         Ok(link_info) => {
                             format!(
                                 "✅ Link saved successfully!\n\n\
-                                URL: {}\n\
-                                Type: {} {}\n\
-                                Size: {}\n\
-                                Saved: {}\n\
-                                Bucket Path: {}\n\
-                                Chunks: {}\n\
-                                Summary: {}\n",
-                                text,
-                                link_info.type_emoji,
-                                link_info.content_type,
-                                crate::utils::format_size(link_info.size),
-                                link_info.timestamp,
-                                link_info.bucket_path,
-                                link_info.num_chunks,
-                                link_info.summary
+                                {}",
+                                link_info.format_telegram_message()
                             )
                         }
                         Err(e) => {
@@ -56,23 +43,11 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                     if query.trim().is_empty() {
                         "Please provide a search query, e.g., '/search cloudflare'".to_string()
                     } else {
-                        match crate::handlers::search_links(env, query).await {
-                            Ok(response) => response,
-                            Err(e) => {
-                                console_error!("Error searching links: {}", e);
-                                format!("Error searching links: {}", e)
-                            }
-                        }
+                        search_query(env, query).await
                     }
                 },
                 _ => {
-                    match crate::handlers::search_links(env, &text).await {
-                        Ok(response) => response,
-                        Err(e) => {
-                            console_error!("Error searching links: {}", e);
-                            format!("Error searching links: {}", e)
-                        }
-                    }
+                    search_query(env, &text).await
                 }
             };
 
@@ -115,4 +90,77 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn list_links(env: Env) -> String {
+    match crate::d1::get_link_stats(env).await {
+        Ok((count, rows)) => {
+            let mut ret = format!("Total links saved: {}\n\n", count);
+            for row in rows {
+                ret.push_str(&row.format_telegram_message());
+            }
+            ret
+        },
+        Err(e) => {
+            console_error!("Error listing links: {}", e);
+            format!("Error listing links: {}", e)
+        }
+    }
+}
+async fn search_query(env: Env, query: &str) -> String {
+    let result = crate::handlers::search_links(env, query).await;
+    match result {
+        Ok(response) => {
+            let mut ret = format!("🔍 Search results for '{}'\n\n", query);
+            for (i, (link_info, chunk_list)) in response.into_iter().enumerate() {
+                ret.push_str(&format!(
+                    "{}. {} {} \n(chunks: {})\n{}\n{}\n\n",
+                    i + 1,
+                    crate::telegram::format_type_emoji(&link_info.content_type),
+                    link_info.title,
+                    chunk_list.iter().map(|chunk_id| chunk_id.to_string()).collect::<Vec<String>>().join(", "),
+                    link_info.url,
+                    link_info.summary
+                ));
+            }
+            ret
+        },
+        Err(e) => {
+            console_error!("Error searching links: {}", e);
+            format!("Error searching links: {}", e)
+        }
+    }
+}
+
+/// Helper function to determine file type emoji based on content type
+pub fn format_type_emoji(content_type: &str) -> &'static str {
+    match content_type.split(';').next().unwrap_or("") {
+        "text/html" => "🌐",
+        "application/pdf" => "📄",
+        t if t.starts_with("image/") => "🖼️",
+        "text/plain" => "📝",
+        _ => "📁",
+    }
+}
+
+impl DocInfo {
+    fn format_telegram_message(&self) -> String {
+        format!(
+            "**URL:** {}\n\
+            **Type:** {} {}\n\
+            **Size:** {}\n\
+            **Saved:** {}\n\
+            **Bucket Path:** {}\n\
+            **Chunks:** {}\n\
+            **Summary:** {}\n",
+            self.url,
+            format_type_emoji(&self.content_type),
+            self.content_type,
+            crate::utils::format_size(self.size),
+            self.created_at,
+            self.bucket_path,
+            self.chunk_count,
+            self.summary
+        )
+    }
 }
