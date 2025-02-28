@@ -145,7 +145,7 @@ pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) ->
 pub async fn generate_summary_with_gemini(env: &Env, text: &str) -> Result<String> {
     gemini_api_request(
         env,
-        &format!("Summarize the following text in exactly 2 dense sentences. Focus on the most important information: {}. Be concise and to the point.", text),
+        &format!("Summarize the following text in exactly 1 dense sentences, as the preview of the content. Be concise and to the point. \n{} ", text),
         None,
     ).await
 }
