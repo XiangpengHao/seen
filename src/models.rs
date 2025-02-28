@@ -86,19 +86,10 @@ pub struct LinkInfo {
 #[derive(Debug)]
 pub struct LinkInfoWithURL {
     pub url: String,
-    pub title: Option<String>,
+    pub title: String,
     #[allow(dead_code)]
     pub content_type: String,
     pub type_emoji: String,
     #[allow(dead_code)]
     pub bucket_path: String,
-}
-
-/// Content metadata for processing
-pub struct ContentMetadata<'a> {
-    pub link_id: &'a str,
-    pub url: &'a str,
-    pub content_type: &'a str,
-    pub bucket_path: &'a str,
-    pub title: Option<String>,
 }

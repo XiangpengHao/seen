@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use crate::models::{ContentMetadata, LinkInfo, Update};
+use crate::models::{LinkInfo, Update};
 use crate::storage;
 use crate::utils::{
     extract_text_from_html, extract_text_from_pdf_with_gemini, extract_title_from_html,
@@ -109,15 +109,13 @@ pub async fn handle_link(
     storage::save_to_bucket(env, &bucket_path, content.clone()).await?;
     logger(&format!("Saved content to bucket: {}", bucket_path)).await?;
 
-    let mut content_metadata = ContentMetadata {
-        link_id: &link_id,
-        url: link,
-        content_type: &content_type,
-        bucket_path: &bucket_path,
-        title: None,
-    };
     // Process content based on type and generate embeddings
-    let title = process_content(env, &mut content_metadata, &content, &logger).await?;
+    let (extracted_text, title) = document_to_string(env, &content_type, link, &content).await?;
+    logger(&format!("Extracted text length: {}", extracted_text.len())).await?;
+
+    generate_and_store_embeddings(env, &extracted_text, &link_id, link, &bucket_path, &logger)
+        .await?;
+    logger(&format!("Generated embeddings for: {}", link)).await?;
 
     // Store link info in database
     storage::save_link_to_db(
@@ -126,7 +124,7 @@ pub async fn handle_link(
         &bucket_path,
         &content_type,
         content_size,
-        title.as_deref(),
+        Some(&title),
     )
     .await?;
 
@@ -158,115 +156,108 @@ fn prepare_storage_metadata<'a>(
 }
 
 /// Process content based on its type and generate embeddings
-async fn process_content(
+async fn document_to_string(
     env: &Env,
-    content_metadata: &mut ContentMetadata<'_>,
+    content_type: &str,
+    url: &str,
     content: &[u8],
-    logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
-) -> Result<Option<String>> {
-    if content_metadata.content_type.starts_with("text/html") {
+) -> Result<(String, String)> {
+    let (extracted_text, title) = if content_type.starts_with("text/html") {
         // Process HTML content
-        process_html_content(env, content, content_metadata, logger).await?;
-    } else if content_metadata.content_type.starts_with("application/pdf") {
+        process_html_content(url, content).await?
+    } else if content_type.starts_with("application/pdf") {
         // Process PDF content
-        process_pdf_content(env, content, content_metadata, logger).await?;
-    }
+        process_pdf_content(env, url, content).await?
+    } else {
+        return Err(Error::from("Unsupported content type"));
+    };
 
-    Ok(content_metadata.title.clone())
+    Ok((extracted_text, title))
 }
 
 /// Process HTML content and generate embeddings
-async fn process_html_content(
-    env: &Env,
-    content: &[u8],
-    metadata: &mut ContentMetadata<'_>,
-    logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
-) -> Result<()> {
-    if let Ok(html_content) = String::from_utf8(content.to_vec()) {
-        // Extract title
-        metadata.title = extract_title_from_html(&html_content);
+async fn process_html_content(url: &str, raw_html: &[u8]) -> Result<(String, String)> {
+    let html_content = String::from_utf8(raw_html.to_vec()).unwrap_or_default();
+    let title = match extract_title_from_html(&html_content) {
+        Some(title) => title,
+        None => {
+            // Extract title from URL if not found in HTML
+            let url_parts: Vec<&str> = url.split('/').collect();
+            let filename = url_parts.last().unwrap_or(&"Untitled Document");
 
-        // Extract text
-        let extracted_text = extract_text_from_html(&html_content);
+            // Remove query parameters and file extensions if present
+            let clean_filename = if filename.contains('?') {
+                filename.split('?').next().unwrap_or("Untitled Document")
+            } else {
+                filename
+            };
 
-        // Generate embeddings if enough text
-        if extracted_text.len() > 10 {
-            console_log!("Generating embeddings for HTML content...");
-            generate_and_store_embeddings(env, &extracted_text, metadata, logger).await?;
-        } else {
-            console_log!("Not enough text content for embeddings");
+            // Remove file extension and replace hyphens/underscores with spaces
+            let title_from_url = clean_filename
+                .split('.')
+                .next()
+                .unwrap_or("Untitled Document")
+                .replace('-', " ")
+                .replace('_', " ");
+
+            // Capitalize first letter of each word for better readability
+            title_from_url
+                .split_whitespace()
+                .map(|word| {
+                    if let Some(first_char) = word.chars().next() {
+                        let first_upper = first_char.to_uppercase().collect::<String>();
+                        first_upper + &word[first_char.len_utf8()..]
+                    } else {
+                        word.to_string()
+                    }
+                })
+                .collect::<Vec<String>>()
+                .join(" ")
         }
-    }
-
-    Ok(())
+    };
+    let extracted_text = extract_text_from_html(&html_content);
+    Ok((extracted_text, title))
 }
 
 /// Process PDF content and generate embeddings
-async fn process_pdf_content(
-    env: &Env,
-    content: &[u8],
-    metadata: &mut ContentMetadata<'_>,
-    logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
-) -> Result<()> {
+async fn process_pdf_content(env: &Env, url: &str, content: &[u8]) -> Result<(String, String)> {
     console_log!("Processing PDF content with Gemini API...");
 
     // Extract text from PDF
-    match extract_text_from_pdf_with_gemini(env, content).await {
-        Ok(extracted_text) => {
-            // Set title from filename
-            metadata.title = Some(
-                metadata
-                    .url
-                    .split('/')
-                    .last()
-                    .unwrap_or("PDF Document")
-                    .replace(".pdf", "")
-                    .to_string(),
-            );
+    let extracted_text = extract_text_from_pdf_with_gemini(env, content).await?;
+    let title = url
+        .split('/')
+        .last()
+        .unwrap_or("PDF Document")
+        .replace(".pdf", "")
+        .to_string();
 
-            // Generate embeddings if enough text
-            if extracted_text.len() > 10 {
-                console_log!("Generating embeddings for PDF content...");
-                generate_and_store_embeddings(env, &extracted_text, metadata, logger).await?;
-            } else {
-                console_log!("Not enough text content in PDF for embeddings");
-            }
-        }
-        Err(e) => {
-            console_error!("Failed to extract text from PDF: {}", e);
-        }
-    }
-
-    Ok(())
+    Ok((extracted_text, title))
 }
 
 /// Generate embeddings and store them in the vector database
 async fn generate_and_store_embeddings(
     env: &Env,
     text: &str,
-    metadata: &ContentMetadata<'_>,
+    link_id: &str,
+    url: &str,
+    bucket_path: &str,
     logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
 ) -> Result<()> {
     match vector::generate_embeddings(env, text).await {
         Ok(embeddings) => {
             // Convert to vector metadata
             let vector_metadata = vector::VectorMetadata {
-                link_id: metadata.link_id,
-                url: metadata.url,
-                title: metadata.title.clone(),
-                content_type: metadata.content_type,
-                bucket_path: metadata.bucket_path,
+                link_id,
+                url,
+                bucket_path,
             };
 
             // Insert vector with metadata
             if let Err(e) = vector::insert_vector(env, vector_metadata, embeddings).await {
                 console_error!("Failed to insert vector: {}", e);
             } else {
-                logger(&format!(
-                    "Successfully created embeddings for: {}",
-                    metadata.url
-                ))
-                .await?;
+                logger(&format!("Successfully created embeddings for: {}", url)).await?;
             }
         }
         Err(e) => {
@@ -301,28 +292,14 @@ pub async fn search_links(env: Env, query: &str) -> Result<String> {
     for (i, id) in vector_ids.iter().enumerate() {
         match storage::get_link_by_id(&env, id).await {
             Ok(link_info) => {
-                let title_display = link_info.title.as_ref().map_or_else(
-                    || "No title".to_string(),
-                    |t| {
-                        if t.len() > 40 {
-                            format!("{}...", &t[0..37])
-                        } else {
-                            t.clone()
-                        }
-                    },
-                );
+                let title_display = link_info.title;
 
                 // Format each result with its details
                 response.push_str(&format!(
-                    "{}. {} {} {}\n   {}\n\n",
+                    "{}. {} {}\n{}\n\n",
                     i + 1,
                     link_info.type_emoji,
                     title_display,
-                    if link_info.title.is_some() {
-                        ""
-                    } else {
-                        &link_info.url
-                    },
                     link_info.url,
                 ));
             }

@@ -13,8 +13,6 @@ const WORKERS_AI_API_URL: &str =
 pub struct VectorMetadata<'a> {
     pub link_id: &'a str,
     pub url: &'a str,
-    pub title: Option<String>,
-    pub content_type: &'a str,
     pub bucket_path: &'a str,
 }
 
@@ -79,8 +77,6 @@ pub async fn insert_vector(
         "metadata": {
             "url": metadata.url.to_string(),
             "bucket_path": metadata.bucket_path.to_string(),
-            "content_type": metadata.content_type.to_string(),
-            "title": metadata.title
         }
     });
 
@@ -104,7 +100,10 @@ pub async fn insert_vector(
         return Err(Error::from("Failed to insert vector"));
     }
 
-    console_log!("Vector inserted successfully for link ID: {}", metadata.link_id);
+    console_log!(
+        "Vector inserted successfully for link ID: {}",
+        metadata.link_id
+    );
     Ok(())
 }
 

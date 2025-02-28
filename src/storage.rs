@@ -90,7 +90,8 @@ pub async fn get_link_by_id(env: &Env, link_id: &str) -> Result<LinkInfoWithURL>
         let title = row
             .get("title")
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .unwrap_or("Unknown title")
+            .to_string();
 
         let content_type = row
             .get("content_type")
