@@ -93,3 +93,12 @@ pub struct LinkInfoWithURL {
     #[allow(dead_code)]
     pub bucket_path: String,
 }
+
+/// Content metadata for processing
+pub struct ContentMetadata<'a> {
+    pub link_id: &'a str,
+    pub url: &'a str,
+    pub content_type: &'a str,
+    pub bucket_path: &'a str,
+    pub title: Option<String>,
+}

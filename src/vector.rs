@@ -9,6 +9,15 @@ const VECTORIZE_INDEX_NAME: &str = "seen-index";
 const WORKERS_AI_API_URL: &str =
     "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/baai/bge-base-en-v1.5";
 
+/// Struct to organize vector metadata for insertion
+pub struct VectorMetadata<'a> {
+    pub link_id: &'a str,
+    pub url: &'a str,
+    pub title: Option<String>,
+    pub content_type: &'a str,
+    pub bucket_path: &'a str,
+}
+
 /// Generates embeddings for text using Workers AI
 pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
     let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
@@ -52,12 +61,8 @@ pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
 /// Inserts a vector into the Vectorize index
 pub async fn insert_vector(
     env: &Env,
-    link_id: &str,
+    metadata: VectorMetadata<'_>,
     values: Vec<f32>,
-    url: &str,
-    title: Option<String>,
-    content_type: &str,
-    bucket_path: &str,
 ) -> Result<()> {
     let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
     let api_token = env.secret(CF_API_TOKEN)?.to_string();
@@ -69,13 +74,13 @@ pub async fn insert_vector(
 
     // Create a vector object in JSON format
     let vector_obj = json!({
-        "id": link_id.to_string(),
+        "id": metadata.link_id.to_string(),
         "values": values,
         "metadata": {
-            "url": url.to_string(),
-            "bucket_path": bucket_path.to_string(),
-            "content_type": content_type.to_string(),
-            "title": title
+            "url": metadata.url.to_string(),
+            "bucket_path": metadata.bucket_path.to_string(),
+            "content_type": metadata.content_type.to_string(),
+            "title": metadata.title
         }
     });
 
@@ -99,7 +104,7 @@ pub async fn insert_vector(
         return Err(Error::from("Failed to insert vector"));
     }
 
-    console_log!("Vector inserted successfully for link ID: {}", link_id);
+    console_log!("Vector inserted successfully for link ID: {}", metadata.link_id);
     Ok(())
 }
 

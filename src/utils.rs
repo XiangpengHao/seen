@@ -1,3 +1,6 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
+use worker::*;
+
 /// Extracts text from HTML content
 pub fn extract_text_from_html(html: &str) -> String {
     // Simple HTML text extraction: remove tags and excessive whitespace
@@ -53,4 +56,75 @@ pub fn get_extension_from_content_type(content_type: &str) -> &'static str {
         "application/xml" | "text/xml" => "xml",
         _ => "bin", // Default binary extension for unknown types
     }
+}
+
+pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) -> Result<String> {
+    let api_key = env.secret("GEMINI_API_KEY")?.to_string();
+    let api_url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
+        api_key
+    );
+
+    // Fix for deprecated base64::encode function
+    let base64_content = STANDARD.encode(pdf_content);
+
+    // Create the request payload
+    let payload = serde_json::json!({
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": "Extract the content from this PDF document to markdown format. If there is a figure, extract the text from the figure and describe it in the markdown. The result should be suitable for RAG pipeline. Return only the extracted text, no additional commentary."
+                    },
+                    {
+                        "inline_data": {
+                            "mime_type": "application/pdf",
+                            "data": base64_content
+                        }
+                    }
+                ]
+            }
+        ],
+    });
+
+    // Create and send request
+    let mut headers = Headers::new();
+    headers.set("Content-Type", "application/json")?;
+
+    let mut req_init = RequestInit::new();
+    req_init
+        .with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&payload.to_string())));
+
+    let request = Request::new_with_init(&api_url, &req_init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        return Err(Error::from(format!(
+            "Gemini API failed: Status {}, Error: {}",
+            response.status_code(),
+            error_text
+        )));
+    }
+
+    // Parse the Gemini response
+    let result = response.json::<serde_json::Value>().await?;
+
+    console_log!("Gemini response: {:?}", result);
+
+    // Extract the generated text from the response
+    let text = result
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("content"))
+        .and_then(|c| c.get("parts"))
+        .and_then(|p| p.get(0))
+        .and_then(|p| p.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| Error::from("Failed to parse Gemini API response"))?;
+
+    Ok(text.to_string())
 }
