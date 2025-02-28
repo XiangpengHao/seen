@@ -87,9 +87,10 @@ pub struct LinkInfo {
 pub struct LinkInfoWithURL {
     pub url: String,
     pub title: String,
-    #[allow(dead_code)]
     pub content_type: String,
     pub type_emoji: String,
-    #[allow(dead_code)]
     pub bucket_path: String,
+    pub summary: String,
+    pub size: usize,
+    pub created_at: String,
 }

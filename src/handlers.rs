@@ -1,11 +1,8 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use crate::models::{LinkInfo, Update};
 use crate::storage;
 use crate::utils::{
     extract_text_from_html, extract_text_from_pdf_with_gemini, extract_title_from_html,
-    fetch_content, get_extension_from_content_type,
+    fetch_content, generate_summary_with_gemini, get_extension_from_content_type,
 };
 use crate::vector;
 use serde_json::json;
@@ -48,7 +45,7 @@ pub async fn handle_link_request(req: Request, env: Env) -> Result<Response> {
     }
 
     // Use the handle_link function to process the URL
-    match handle_link(&env, &url_to_save, dummy_logger).await {
+    match handle_link(&env, &url_to_save).await {
         Ok(link_info) => {
             // Create JSON response with the result
             let response_data = json!({
@@ -79,26 +76,29 @@ pub async fn handle_link_request(req: Request, env: Env) -> Result<Response> {
     }
 }
 
-fn dummy_logger(_text: &str) -> Pin<Box<dyn Future<Output = Result<()>>>> {
-    Box::pin(async move { Ok(()) })
-}
-
 /// Process and store a link
-pub async fn handle_link(
-    env: &Env,
-    link: &str,
-    logger: impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
-) -> Result<LinkInfo> {
+pub async fn handle_link(env: &Env, link: &str) -> Result<LinkInfo> {
+    // First check if link already exists in database
+    match storage::find_link_by_url(env, link).await {
+        Ok(existing_link) => {
+            // Return existing link info
+            return Ok(LinkInfo {
+                content_type: existing_link.content_type,
+                type_emoji: existing_link.type_emoji.to_string(),
+                size: existing_link.size,
+                timestamp: existing_link.created_at,
+                bucket_path: existing_link.bucket_path,
+            });
+        }
+        Err(_) => {
+            // Continue with normal processing for new links
+        }
+    }
+
     let link_id = Uuid::new_v4().to_string();
 
     // Fetch the content
     let (content, content_type) = fetch_content(link).await?;
-    logger(&format!(
-        "Fetched link: {}, length: {}",
-        link,
-        content.len()
-    ))
-    .await?;
 
     // Process metadata and prepare storage
     let (bucket_path, type_emoji, content_size) =
@@ -107,28 +107,27 @@ pub async fn handle_link(
 
     // Save content to bucket
     storage::save_to_bucket(env, &bucket_path, content.clone()).await?;
-    logger(&format!("Saved content to bucket: {}", bucket_path)).await?;
 
     // Process content based on type and generate embeddings
     let (extracted_text, title) = document_to_string(env, &content_type, link, &content).await?;
-    logger(&format!("Extracted text length: {}", extracted_text.len())).await?;
 
-    generate_and_store_embeddings(env, &extracted_text, &link_id, link, &bucket_path, &logger)
-        .await?;
-    logger(&format!("Generated embeddings for: {}", link)).await?;
+    // Generate summary using Gemini
+    let summary = generate_summary_with_gemini(env, &extracted_text).await?;
 
-    // Store link info in database
+    generate_and_store_embeddings(env, &extracted_text, &link_id, link, &bucket_path).await?;
+
+    // Store link info in database with summary
     storage::save_link_to_db(
         env,
+        &link_id,
         link,
         &bucket_path,
         &content_type,
         content_size,
-        Some(&title),
+        &title,
+        &summary,
     )
     .await?;
-
-    logger(&format!("Saved link info to database: {}", link)).await?;
 
     // Create information structure to return
     let link_info = LinkInfo {
@@ -242,28 +241,18 @@ async fn generate_and_store_embeddings(
     link_id: &str,
     url: &str,
     bucket_path: &str,
-    logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
 ) -> Result<()> {
-    match vector::generate_embeddings(env, text).await {
-        Ok(embeddings) => {
-            // Convert to vector metadata
-            let vector_metadata = vector::VectorMetadata {
-                link_id,
-                url,
-                bucket_path,
-            };
+    let embeddings = vector::generate_embeddings(env, text).await?;
 
-            // Insert vector with metadata
-            if let Err(e) = vector::insert_vector(env, vector_metadata, embeddings).await {
-                console_error!("Failed to insert vector: {}", e);
-            } else {
-                logger(&format!("Successfully created embeddings for: {}", url)).await?;
-            }
-        }
-        Err(e) => {
-            console_error!("Failed to generate embeddings: {}", e);
-        }
-    }
+    // Convert to vector metadata
+    let vector_metadata = vector::VectorMetadata {
+        link_id,
+        url,
+        bucket_path,
+    };
+
+    // Insert vector with metadata
+    vector::insert_vector(env, vector_metadata, embeddings).await?;
 
     Ok(())
 }
@@ -296,19 +285,21 @@ pub async fn search_links(env: Env, query: &str) -> Result<String> {
 
                 // Format each result with its details
                 response.push_str(&format!(
-                    "{}. {} {}\n{}\n\n",
+                    "{}. {} {}\n{}\n{}\n\n",
                     i + 1,
                     link_info.type_emoji,
                     title_display,
                     link_info.url,
+                    link_info.summary
                 ));
             }
             Err(e) => {
                 console_error!("Error fetching link info for ID {}: {}", id, e);
                 response.push_str(&format!(
-                    "{}. ⚠️ Result found but details unavailable (ID: {})\n\n",
+                    "{}. ⚠️ Result found but details unavailable (ID: {}, error: {})\n\n",
                     i + 1,
-                    id
+                    id,
+                    e
                 ));
             }
         }

@@ -1,5 +1,3 @@
-use std::{future::Future, pin::Pin};
-
 use crate::models::Update;
 use serde_json::json;
 use worker::*;
@@ -24,23 +22,31 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                 "/list" => crate::storage::get_link_stats(env).await?,
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
                     // Get detailed information from handle_link
-                    let link_info = crate::handlers::handle_link(&env, &text, message_logger(&env, message.chat.id)).await?;
-                    format!(
-                        "✅ Link saved successfully!\n\n\
-                        URL: {}\n\
-                        Type: {} {}\n\
-                        Size: {}\n\
-                        Saved: {}\n\
-                        Bucket Path: {}\n\n\
-                        Use /list to see all saved links.\n\
-                        Use /search <query> to search through saved content.",
-                        text,
-                        link_info.type_emoji,
-                        link_info.content_type,
-                        crate::utils::format_size(link_info.size),
-                        link_info.timestamp,
-                        link_info.bucket_path
-                    )
+                    match crate::handlers::handle_link(&env, &text).await {
+                        Ok(link_info) => {
+                            format!(
+                                "✅ Link saved successfully!\n\n\
+                                URL: {}\n\
+                                Type: {} {}\n\
+                                Size: {}\n\
+                                Saved: {}\n\
+                                Bucket Path: {}\n\n\
+                                Use /list to see all saved links.\n\
+                                Use /search <query> to search through saved content.",
+                                text,
+                                link_info.type_emoji,
+                                link_info.content_type,
+                                crate::utils::format_size(link_info.size),
+                                link_info.timestamp,
+                                link_info.bucket_path
+                            )
+                        }
+                        Err(e) => {
+                            console_error!("Error handling link: {}", e);
+                            format!("Error handling link: {}", e)
+                        }
+                    }
+                   
                 },
                 _ if text.starts_with("/search ") => {
                     // Extract the search query
@@ -64,19 +70,6 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
     Ok(())
 }
 
-pub fn message_logger(
-    env: &Env,
-    chat_id: i64,
-) -> impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>> {
-    let token = env.secret(BOT_TOKEN).unwrap().to_string();
-
-    move |text: &str| -> Pin<Box<dyn Future<Output = Result<()>>>> {
-        let token = token.clone();
-        let text = text.to_string(); // Clone the text to move into the async block
-
-        Box::pin(async move { send_message(&token, chat_id, &text).await })
-    }
-}
 
 /// Sends a message to a Telegram chat
 pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {

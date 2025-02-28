@@ -1,5 +1,5 @@
 use crate::models::LinkInfoWithURL;
-use serde_json::Value;
+use serde::Deserialize;
 use wasm_bindgen::JsValue;
 use worker::*;
 
@@ -69,55 +69,31 @@ pub async fn get_link_stats(env: Env) -> Result<String> {
 }
 
 /// Retrieve a link by its ID from the database
-pub async fn get_link_by_id(env: &Env, link_id: &str) -> Result<LinkInfoWithURL> {
-    let d1 = env.d1("SEEN_DB")?;
+pub async fn get_link_by_id(env: &Env, id: &str) -> Result<LinkInfoWithURL> {
+    let db = env.d1("SEEN_DB")?;
 
-    // Query database to get link info by bucket_path that contains the link_id
-    let stmt = d1
-        .prepare("SELECT url, created_at, bucket_path, content_type, size, title FROM links WHERE bucket_path LIKE ?")
-        .bind(&[JsValue::from_str(&format!("%{}%", link_id))])?;
+    let query = db
+        .prepare("SELECT url, title, content_type, bucket_path, summary FROM links WHERE id = ?")
+        .bind(&[id.into()])?
+        .first::<LinkRow>(None)
+        .await?;
 
-    let result = stmt.run().await?;
-    let rows = result.results::<Value>()?;
+    if let Some(row) = query {
+        let type_emoji = format_type_emoji(&row.content_type);
 
-    if let Some(row) = rows.first() {
-        let url = row
-            .get("url")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown URL")
-            .to_string();
-
-        let title = row
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown title")
-            .to_string();
-
-        let content_type = row
-            .get("content_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown type")
-            .to_string();
-
-        let bucket_path = row
-            .get("bucket_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        // Format file type emoji based on content type
-        let type_emoji = format_type_emoji(content_type.split(';').next().unwrap_or(""));
-
-        return Ok(LinkInfoWithURL {
-            url,
-            title,
-            content_type,
+        Ok(LinkInfoWithURL {
+            url: row.url,
+            title: row.title.unwrap_or("No title available".to_string()),
+            content_type: row.content_type,
             type_emoji: type_emoji.to_string(),
-            bucket_path,
-        });
+            bucket_path: row.bucket_path,
+            summary: row.summary.unwrap_or("No summary available".to_string()),
+            size: 0,
+            created_at: "".to_string(),
+        })
+    } else {
+        Err(Error::from("Link not found"))
     }
-
-    Err(Error::from(format!("Link with ID {} not found", link_id)))
 }
 
 /// Save content to R2 bucket
@@ -130,23 +106,27 @@ pub async fn save_to_bucket(env: &Env, bucket_path: &str, content: Vec<u8>) -> R
 /// Save link metadata to database
 pub async fn save_link_to_db(
     env: &Env,
+    id: &str,
     url: &str,
     bucket_path: &str,
     content_type: &str,
     size: usize,
-    title: Option<&str>,
+    title: &str,
+    summary: &str,
 ) -> Result<()> {
     let d1 = env.d1("SEEN_DB")?;
 
     // Insert with bucket path and content type
     let stmt = d1
-        .prepare("INSERT INTO links (url, created_at, bucket_path, content_type, size, title) VALUES (?, datetime('now'), ?, ?, ?, ?)")
+        .prepare("INSERT INTO links (id, url, created_at, bucket_path, content_type, size, title, summary) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?)")
         .bind(&[
+            JsValue::from_str(id),
             JsValue::from_str(url),
             JsValue::from_str(bucket_path),
             JsValue::from_str(content_type),
             JsValue::from_f64(size as f64),
-            if let Some(t) = title { JsValue::from_str(t) } else { JsValue::null() },
+            JsValue::from_str(title),
+            JsValue::from_str(summary),
         ])?;
 
     // Execute query
@@ -163,4 +143,57 @@ pub fn format_type_emoji(content_type: &str) -> &'static str {
         "text/plain" => "📝",
         _ => "📁",
     }
+}
+
+// Update the struct for D1 row results
+#[derive(Deserialize)]
+struct LinkRow {
+    url: String,
+    title: Option<String>,
+    content_type: String,
+    bucket_path: String,
+    summary: Option<String>,
+}
+
+/// Find a link by URL in the database
+pub async fn find_link_by_url(env: &Env, url: &str) -> Result<LinkInfoWithURL> {
+    let db = env.d1("SEEN_DB")?;
+
+    // Query the database
+    let query_result = db
+        .prepare("SELECT id, url, title, content_type, bucket_path, size, created_at, summary FROM links WHERE url = ? LIMIT 1")
+        .bind(&[url.into()])?
+        .all()
+        .await?;
+
+    let rows = query_result.results::<ExistingLinkRow>()?;
+
+    if let Some(row) = rows.into_iter().next() {
+        let type_emoji = format_type_emoji(&row.content_type);
+
+        Ok(LinkInfoWithURL {
+            url: row.url,
+            title: row.title,
+            content_type: row.content_type,
+            type_emoji: type_emoji.to_string(),
+            bucket_path: row.bucket_path,
+            summary: row.summary,
+            size: row.size,
+            created_at: row.created_at,
+        })
+    } else {
+        Err(Error::from("Link not found"))
+    }
+}
+
+// Add this struct to handle the query result
+#[derive(Deserialize)]
+struct ExistingLinkRow {
+    url: String,
+    title: String,
+    content_type: String,
+    bucket_path: String,
+    summary: String,
+    size: usize,
+    created_at: String,
 }

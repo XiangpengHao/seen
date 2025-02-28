@@ -58,37 +58,42 @@ pub fn get_extension_from_content_type(content_type: &str) -> &'static str {
     }
 }
 
-pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) -> Result<String> {
+/// Base function to make a request to Gemini API
+async fn gemini_api_request(
+    env: &Env,
+    prompt: &str,
+    content: Option<(&str, &[u8])>,
+) -> Result<String> {
     let api_key = env.secret("GEMINI_API_KEY")?.to_string();
     let api_url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
         api_key
     );
 
-    // Fix for deprecated base64::encode function
-    let base64_content = STANDARD.encode(pdf_content);
+    // Build parts array for the request
+    let mut parts = vec![serde_json::json!({
+        "text": prompt
+    })];
+
+    // Add binary content if provided
+    if let Some((mime_type, data)) = content {
+        parts.push(serde_json::json!({
+            "inline_data": {
+                "mime_type": mime_type,
+                "data": STANDARD.encode(data)
+            }
+        }));
+    }
 
     // Create the request payload
     let payload = serde_json::json!({
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": "Extract the content from this PDF document to markdown format. If there is a figure, extract the text from the figure and describe it in the markdown. The result should be suitable for RAG pipeline. Return only the extracted text, no additional commentary."
-                    },
-                    {
-                        "inline_data": {
-                            "mime_type": "application/pdf",
-                            "data": base64_content
-                        }
-                    }
-                ]
-            }
-        ],
+        "contents": [{
+            "role": "user",
+            "parts": parts
+        }],
     });
 
-    // Create and send request
+    // Make the request
     let mut headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
 
@@ -101,6 +106,7 @@ pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) ->
     let request = Request::new_with_init(&api_url, &req_init)?;
     let mut response = Fetch::Request(request).send().await?;
 
+    // Handle errors
     if response.status_code() != 200 {
         let error_text = response.text().await?;
         return Err(Error::from(format!(
@@ -110,13 +116,11 @@ pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) ->
         )));
     }
 
-    // Parse the Gemini response
+    // Parse the response
     let result = response.json::<serde_json::Value>().await?;
 
-    console_log!("Gemini response: {:?}", result);
-
-    // Extract the generated text from the response
-    let text = result
+    // Extract the text
+    result
         .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
@@ -124,9 +128,26 @@ pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) ->
         .and_then(|p| p.get(0))
         .and_then(|p| p.get("text"))
         .and_then(|t| t.as_str())
-        .ok_or_else(|| Error::from("Failed to parse Gemini API response"))?;
+        .map(|s| s.to_string())
+        .ok_or_else(|| Error::from("Failed to parse Gemini API response"))
+}
 
-    Ok(text.to_string())
+/// Extract text from PDF content using Gemini API
+pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) -> Result<String> {
+    gemini_api_request(
+        env,
+        "Extract the content from this PDF document to markdown format. If there is a figure, extract the text from the figure and describe it in the markdown. The result should be suitable for RAG pipeline. Return only the extracted text, no additional commentary.",
+        Some(("application/pdf", pdf_content)),
+    ).await
+}
+
+/// Generate a summary of content using Gemini API
+pub async fn generate_summary_with_gemini(env: &Env, text: &str) -> Result<String> {
+    gemini_api_request(
+        env,
+        &format!("Summarize the following text in exactly 2 dense sentences. Focus on the most important information: {}. Be concise and to the point.", text),
+        None,
+    ).await
 }
 
 /// Fetch content from a URL
