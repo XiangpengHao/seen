@@ -5,7 +5,7 @@ use crate::models::{ContentMetadata, LinkInfo, Update};
 use crate::storage;
 use crate::utils::{
     extract_text_from_html, extract_text_from_pdf_with_gemini, extract_title_from_html,
-    get_extension_from_content_type,
+    fetch_content, get_extension_from_content_type,
 };
 use crate::vector;
 use serde_json::json;
@@ -92,7 +92,13 @@ pub async fn handle_link(
     let link_id = Uuid::new_v4().to_string();
 
     // Fetch the content
-    let (content, content_type) = fetch_content(link, &logger).await?;
+    let (content, content_type) = fetch_content(link).await?;
+    logger(&format!(
+        "Fetched link: {}, length: {}",
+        link,
+        content.len()
+    ))
+    .await?;
 
     // Process metadata and prepare storage
     let (bucket_path, type_emoji, content_size) =
@@ -103,17 +109,15 @@ pub async fn handle_link(
     storage::save_to_bucket(env, &bucket_path, content.clone()).await?;
     logger(&format!("Saved content to bucket: {}", bucket_path)).await?;
 
+    let mut content_metadata = ContentMetadata {
+        link_id: &link_id,
+        url: link,
+        content_type: &content_type,
+        bucket_path: &bucket_path,
+        title: None,
+    };
     // Process content based on type and generate embeddings
-    let title = process_content(
-        env,
-        &content_type,
-        &content,
-        &link_id,
-        link,
-        &bucket_path,
-        &logger,
-    )
-    .await?;
+    let title = process_content(env, &mut content_metadata, &content, &logger).await?;
 
     // Store link info in database
     storage::save_link_to_db(
@@ -140,49 +144,6 @@ pub async fn handle_link(
     Ok(link_info)
 }
 
-/// Fetch content from a URL
-async fn fetch_content(
-    link: &str,
-    logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
-) -> Result<(Vec<u8>, String)> {
-    let mut headers = Headers::new();
-    headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")?;
-    headers.set(
-        "Accept",
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    )?;
-    headers.set("Accept-Language", "en-US,en;q=0.5")?;
-
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Get).with_headers(headers);
-
-    let request = Request::new_with_init(link, &req_init)?;
-    let mut response = Fetch::Request(request).send().await?;
-
-    if response.status_code() != 200 {
-        return Err(Error::from(format!(
-            "Failed to fetch link: Status {}",
-            response.status_code()
-        )));
-    }
-
-    let content_type = response
-        .headers()
-        .get("Content-Type")
-        .unwrap_or_else(|_| Some("application/octet-stream".to_string()))
-        .unwrap_or_else(|| "application/octet-stream".to_string());
-
-    let content = response.bytes().await?;
-    logger(&format!(
-        "Downloaded content for {}, size: {}",
-        link,
-        content.len()
-    ))
-    .await?;
-
-    Ok((content, content_type))
-}
-
 /// Prepare metadata for storage
 fn prepare_storage_metadata<'a>(
     content_type: &'a str,
@@ -199,31 +160,19 @@ fn prepare_storage_metadata<'a>(
 /// Process content based on its type and generate embeddings
 async fn process_content(
     env: &Env,
-    content_type: &str,
+    content_metadata: &mut ContentMetadata<'_>,
     content: &[u8],
-    link_id: &str,
-    link: &str,
-    bucket_path: &str,
     logger: &impl Fn(&str) -> Pin<Box<dyn Future<Output = Result<()>>>>,
 ) -> Result<Option<String>> {
-    // Create a mutable metadata struct
-    let mut metadata = ContentMetadata {
-        link_id,
-        url: link,
-        content_type,
-        bucket_path,
-        title: None,
-    };
-
-    if content_type.starts_with("text/html") {
+    if content_metadata.content_type.starts_with("text/html") {
         // Process HTML content
-        process_html_content(env, content, &mut metadata, logger).await?;
-    } else if content_type == "application/pdf" {
+        process_html_content(env, content, content_metadata, logger).await?;
+    } else if content_metadata.content_type.starts_with("application/pdf") {
         // Process PDF content
-        process_pdf_content(env, content, &mut metadata, logger).await?;
+        process_pdf_content(env, content, content_metadata, logger).await?;
     }
 
-    Ok(metadata.title)
+    Ok(content_metadata.title.clone())
 }
 
 /// Process HTML content and generate embeddings

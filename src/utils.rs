@@ -128,3 +128,38 @@ pub async fn extract_text_from_pdf_with_gemini(env: &Env, pdf_content: &[u8]) ->
 
     Ok(text.to_string())
 }
+
+/// Fetch content from a URL
+/// Returns the content and the content type
+pub async fn fetch_content(link: &str) -> Result<(Vec<u8>, String)> {
+    let mut headers = Headers::new();
+    headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")?;
+    headers.set(
+        "Accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    )?;
+    headers.set("Accept-Language", "en-US,en;q=0.5")?;
+
+    let mut req_init = RequestInit::new();
+    req_init.with_method(Method::Get).with_headers(headers);
+
+    let request = Request::new_with_init(link, &req_init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        return Err(Error::from(format!(
+            "Failed to fetch link: Status {}",
+            response.status_code()
+        )));
+    }
+
+    let content_type = response
+        .headers()
+        .get("Content-Type")
+        .unwrap_or_else(|_| Some("application/octet-stream".to_string()))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    let content = response.bytes().await?;
+
+    Ok((content, content_type))
+}
