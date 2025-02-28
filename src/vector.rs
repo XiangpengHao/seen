@@ -1,0 +1,160 @@
+use crate::models::{EmbeddingRequest, EmbeddingResponse, VectorQueryRequest, VectorQueryResponse};
+use serde_json::json;
+use worker::*;
+
+// Constants for Workers AI
+const CF_ACCOUNT_ID: &str = "CF_ACCOUNT_ID";
+const CF_API_TOKEN: &str = "CF_API_TOKEN";
+const VECTORIZE_INDEX_NAME: &str = "seen-index";
+const WORKERS_AI_API_URL: &str =
+    "https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/@cf/baai/bge-base-en-v1.5";
+
+/// Generates embeddings for text using Workers AI
+pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
+    let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
+    let api_token = env.secret(CF_API_TOKEN)?.to_string();
+
+    let url = WORKERS_AI_API_URL.replace("{account_id}", &account_id);
+
+    let embedding_req = EmbeddingRequest {
+        text: vec![text.to_string()],
+    };
+
+    let mut headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_token))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(
+            &serde_json::to_string(&embedding_req)?,
+        )));
+
+    let request = Request::new_with_init(&url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        console_error!("Failed to generate embeddings: {}", error_text);
+        return Err(Error::from("Failed to generate embeddings"));
+    }
+
+    let embedding_response: EmbeddingResponse = response.json().await?;
+
+    if !embedding_response.success || embedding_response.result.data.is_empty() {
+        return Err(Error::from("Failed to generate embeddings: empty response"));
+    }
+
+    Ok(embedding_response.result.data[0].clone())
+}
+
+/// Inserts a vector into the Vectorize index
+pub async fn insert_vector(
+    env: &Env,
+    link_id: &str,
+    values: Vec<f32>,
+    url: &str,
+    title: Option<String>,
+    content_type: &str,
+    bucket_path: &str,
+) -> Result<()> {
+    let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
+    let api_token = env.secret(CF_API_TOKEN)?.to_string();
+
+    let url_endpoint = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/vectorize/v2/indexes/{}/insert",
+        account_id, VECTORIZE_INDEX_NAME
+    );
+
+    // Create a vector object in JSON format
+    let vector_obj = json!({
+        "id": link_id.to_string(),
+        "values": values,
+        "metadata": {
+            "url": url.to_string(),
+            "bucket_path": bucket_path.to_string(),
+            "content_type": content_type.to_string(),
+            "title": title
+        }
+    });
+
+    let ndjson = serde_json::to_string(&vector_obj)?;
+
+    let mut headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_token))?;
+    headers.set("Content-Type", "application/x-ndjson")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&ndjson)));
+
+    let request = Request::new_with_init(&url_endpoint, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        console_error!("Failed to insert vector: {}", error_text);
+        return Err(Error::from("Failed to insert vector"));
+    }
+
+    console_log!("Vector inserted successfully for link ID: {}", link_id);
+    Ok(())
+}
+
+/// Queries the Vectorize index for similar vectors
+pub async fn query_vectors(env: &Env, query_text: &str, top_k: usize) -> Result<Vec<String>> {
+    let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
+    let api_token = env.secret(CF_API_TOKEN)?.to_string();
+
+    // Generate embedding for the query text
+    let query_vector = generate_embeddings(env, query_text).await?;
+
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/vectorize/v2/indexes/{}/query",
+        account_id, VECTORIZE_INDEX_NAME
+    );
+
+    // Simplify query to just get IDs
+    let query_req = VectorQueryRequest {
+        vector: query_vector,
+        top_k,
+    };
+
+    let mut headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_token))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(
+            &serde_json::to_string(&query_req)?,
+        )));
+
+    let request = Request::new_with_init(&url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        console_error!("Failed to query vectors: {}", error_text);
+        return Err(Error::from("Failed to query vectors"));
+    }
+
+    let query_response: VectorQueryResponse = response.json().await?;
+
+    if !query_response.success {
+        return Err(Error::from(
+            "Failed to query vectors: unsuccessful response",
+        ));
+    }
+
+    // Just return the vector IDs
+    Ok(query_response
+        .result
+        .matches
+        .iter()
+        .map(|m| m.id.clone())
+        .collect())
+}
