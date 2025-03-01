@@ -17,7 +17,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
 
             // Generate a response based on the command
             let response = match text.as_str() {
-                "/start" => "Hello! I'm your Telegram bot running on Cloudflare Workers with Rust!".to_string(),
+                "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
                 "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\nOr simply send a URL to save it, or any text to search for it.".to_string(),
                 "/list" => list_links(env).await,
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
@@ -25,7 +25,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                     match crate::handlers::handle_link(&env, &text).await {
                         Ok(link_info) => {
                             format!(
-                                "✅ Link saved successfully!\n\n\
+                                "✅ Document saved!\n\
                                 {}",
                                 link_info.format_telegram_message()
                             )
@@ -68,7 +68,8 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     // Create request JSON
     let body = json!({
         "chat_id": chat_id,
-        "text": text
+        "text": text,
+        "parse_mode": "HTML"
     });
 
     // Send the request
@@ -85,7 +86,7 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
 
     // Check status code
     if response.status_code() != 200 {
-        console_error!("Failed to send message: Status {}", response.status_code());
+        console_error!("Failed to send message: Status {}, message: {}", response.status_code(), body.to_string());
         return Err(Error::from("Failed to send message"));
     }
 
@@ -114,7 +115,7 @@ async fn search_query(env: Env, query: &str) -> String {
             let mut ret = format!("🔍 Search results for '{}'\n\n", query);
             for (i, (link_info, chunk_list)) in response.into_iter().enumerate() {
                 ret.push_str(&format!(
-                    "{}. {} {} \n(chunks: {})\n{}\n{}\n\n",
+                    "{}. {} <b>{}</b> \n(chunks: {})\n{}\n{}\n\n",
                     i + 1,
                     crate::telegram::format_type_emoji(&link_info.content_type),
                     link_info.title,
@@ -146,19 +147,17 @@ pub fn format_type_emoji(content_type: &str) -> &'static str {
 impl DocInfo {
     fn format_telegram_message(&self) -> String {
         format!(
-            "**URL:** {}\n\
-            **Type:** {} {}\n\
-            **Size:** {}\n\
-            **Saved:** {}\n\
-            **Bucket Path:** {}\n\
-            **Chunks:** {}\n\
-            **Summary:** {}\n",
+            "<b>URL:</b> {}\n\
+            <b>Type:</b> {} {}\n\
+            <b>Size:</b> {}\n\
+            <b>Saved:</b> {}\n\
+            <b>Chunks:</b> {}\n\
+            <b>Summary:</b>\n{}\n",
             self.url,
             format_type_emoji(&self.content_type),
             self.content_type,
             crate::utils::format_size(self.size),
             self.created_at,
-            self.bucket_path,
             self.chunk_count,
             self.summary
         )

@@ -2,7 +2,6 @@ use crate::d1::{self, DocInfo};
 use crate::models::{Update, VectorMetadata};
 use crate::utils::{chunk_and_summary_link, fetch_content, get_extension_from_content_type};
 use crate::vector;
-use futures_util;
 use uuid::Uuid;
 use worker::*;
 
@@ -21,29 +20,19 @@ pub async fn handle_link(env: &Env, link: &str) -> Result<DocInfo> {
 
     let link_id = Uuid::new_v4().to_string();
     let current_time = js_sys::Date::new_0().to_iso_string().as_string().unwrap();
-    let env_clone = env.clone(); // Clone for use in the parallel tasks
 
-    let (content_result, processed_data) = futures_util::join!(
-        // Task 1: Fetch and save content
-        async {
-            let (content, content_type) = fetch_content(link).await?;
-            let bucket_path = get_bucket_path(&content_type, &link_id);
+    // Download content first
+    console_log!("Fetching content from link: {}", link);
+    let (content, content_type) = fetch_content(link).await?;
+    let bucket_path = get_bucket_path(&content_type, &link_id);
+    let content_size = content.len();
 
-            let content_size = content.len();
-            d1::save_to_bucket(env, &bucket_path, content).await?;
+    // Save content to bucket
+    d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
 
-            Ok::<_, Error>((content_type.clone(), bucket_path.clone(), content_size))
-        },
-        // Task 2: Process the link with Gemini API (doesn't need content)
-        async {
-            console_log!("Processing link with Gemini API: {}", link);
-            chunk_and_summary_link(&env_clone, link).await
-        }
-    );
-
-    // Unwrap results from both parallel tasks
-    let (content_type, bucket_path, content_size) = content_result?;
-    let processed_data = processed_data?;
+    // Process the content with Gemini API
+    console_log!("Processing content with Gemini API from: {}", link);
+    let processed_data = chunk_and_summary_link(env, &content, &content_type).await?;
 
     let row = DocInfo {
         id: link_id.clone(),
@@ -106,19 +95,14 @@ pub async fn search_links(env: Env, query: &str) -> Result<Vec<(DocInfo, Vec<u64
     let mut doc_best_scores: std::collections::HashMap<String, f32> =
         std::collections::HashMap::new();
 
-    for (vector_id, score, _metadata) in vector_results {
-        let (document_id, chunk_id) = vector_id.split_once("-").unwrap();
-
-        // Add this chunk to the document's matches
+    for (_vector_id, score, metadata) in vector_results {
         doc_matches
-            .entry(document_id.to_string())
-            .or_insert_with(Vec::new)
-            .push((score, chunk_id.parse::<u64>().unwrap()));
+            .entry(metadata.document_id.clone())
+            .or_default()
+            .push((score, metadata.chunk_id));
 
         // Update the document's best score if this is higher
-        let current_best = doc_best_scores
-            .entry(document_id.to_string())
-            .or_insert(0.0);
+        let current_best = doc_best_scores.entry(metadata.document_id).or_insert(0.0);
         if score > *current_best {
             *current_best = score;
         }
@@ -130,7 +114,7 @@ pub async fn search_links(env: Env, query: &str) -> Result<Vec<(DocInfo, Vec<u64
 
     let mut return_val = Vec::new();
 
-    for (_i, (doc_id, _)) in sorted_docs.iter().take(5).enumerate() {
+    for (doc_id, _) in sorted_docs.iter().take(5) {
         let link_info = d1::get_link_by_id(&env, doc_id).await?;
 
         // Sort the chunks by score (highest first)

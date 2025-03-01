@@ -109,6 +109,8 @@ async fn gemini_api_request(
     // Parse the response
     let result = response.json::<serde_json::Value>().await?;
 
+    console_log!("Gemini API response: {}", result);
+
     // Extract the text
     result
         .get("candidates")
@@ -123,19 +125,20 @@ async fn gemini_api_request(
 }
 
 /// Process a link with Gemini API and return structured data
-pub async fn chunk_and_summary_link(env: &Env, link: &str) -> Result<ProcessedLinkData> {
+pub async fn chunk_and_summary_link(
+    env: &Env,
+    content: &[u8],
+    content_type: &str,
+) -> Result<ProcessedLinkData> {
     let prompt = format!(
-        "OCR/convert the following page into Markdown. Tables should be formatted as markdown tables. \
+        "Convert the following content into Markdown. Tables should be formatted as markdown tables. \
         Figures should be described in the text, text in the figures should be extracted. \
         Do not surround your output with triple backticks. \
-        Chunk the document into sections of roughly 500 - 1000 words. Our goal is to identify parts of the page with same semantic \
+        Chunk the document into sections of roughly 1000 - 2000 words. Our goal is to identify parts of the page with same semantic \
         theme. These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
         You should generate a two sentence summary of the document, with dense and concise brief, \
         output in the summary field.\n\n\
-        You should read the original title of the document, and if not present, you should generate one based on the data. output in the title field.\n
-        You should download the content of the link and use it to generate the summary and title, be careful and don't hallucinate.\n\n\
-        Link: {}",
-        link
+        You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n"
     );
 
     let schema = serde_json::json!({
@@ -161,13 +164,15 @@ pub async fn chunk_and_summary_link(env: &Env, link: &str) -> Result<ProcessedLi
         ]
     });
 
-    let response_text = gemini_api_request(env, &prompt, None, Some(schema)).await?;
+    // Pass the content to Gemini API
+    let response_text =
+        gemini_api_request(env, &prompt, Some((content_type, content)), Some(schema)).await?;
 
     // Parse the response into our structured type
     let data: ProcessedLinkData = serde_json::from_str(&response_text).map_err(|e| {
         Error::from(format!(
-            "Failed to parse Gemini response into structured data: {}",
-            e
+            "Failed to parse Gemini response into structured data: {}, response: {}",
+            e, response_text
         ))
     })?;
 
