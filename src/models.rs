@@ -39,7 +39,7 @@ pub struct EmbeddingResult {
     pub data: Vec<Vec<f32>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct VectorMetadata {
     pub chunk_id: u64,
     pub document_id: String,

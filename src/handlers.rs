@@ -13,7 +13,7 @@ pub async fn handle_webhook(mut req: Request, env: Env) -> Result<Response> {
 }
 
 /// Process and store a link
-pub async fn handle_link(env: &Env, link: &str) -> Result<DocInfo> {
+pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
     if let Ok(existing_link) = d1::find_link_by_url(env, link).await {
         return Ok(existing_link);
     }
@@ -26,9 +26,6 @@ pub async fn handle_link(env: &Env, link: &str) -> Result<DocInfo> {
     let (content, content_type) = fetch_content(link).await?;
     let bucket_path = get_bucket_path(&content_type, &link_id);
     let content_size = content.len();
-
-    // Save content to bucket
-    d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
 
     // Process the content with Gemini API
     console_log!("Processing content with Gemini API from: {}", link);
@@ -46,21 +43,24 @@ pub async fn handle_link(env: &Env, link: &str) -> Result<DocInfo> {
         chunk_count: processed_data.chunks.len(),
     };
 
-    d1::save_link_to_db(env, &row).await?;
+    let mut embeddings = Vec::with_capacity(processed_data.chunks.len());
+    for chunk_text in processed_data.chunks.iter() {
+        let embedding = vector::generate_embeddings(env, chunk_text).await?;
+        embeddings.push(embedding);
+    }
 
-    // Process each chunk and generate embeddings
-    for (i, chunk_text) in processed_data.chunks.iter().enumerate() {
-        let embeddings = vector::generate_embeddings(env, chunk_text).await?;
-
+    for (i, embedding) in embeddings.into_iter().enumerate() {
         let vector_id = format!("{}-{}", link_id, i);
         let vector_metadata = VectorMetadata {
             document_id: link_id.clone(),
             chunk_id: i as u64,
         };
-
-        vector::insert_vector(env, &vector_id, vector_metadata, embeddings).await?;
+        vector::insert_vector(env, &vector_id, vector_metadata, embedding).await?;
     }
 
+    // TODO: how to make sure these steps are atomic?
+    d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
+    d1::save_link_to_db(env, &row).await?;
     let kv = env.kv("SEEN_KV")?;
     kv.put(&link_id, &processed_data)?.execute().await?;
     console_log!("Stored processed data in KV with key: {}", link_id);
@@ -115,18 +115,45 @@ pub async fn search_links(env: Env, query: &str) -> Result<Vec<(DocInfo, Vec<u64
     let mut return_val = Vec::new();
 
     for (doc_id, _) in sorted_docs.iter().take(5) {
-        let link_info = d1::get_link_by_id(&env, doc_id).await?;
+        match d1::get_link_by_id(&env, doc_id).await? {
+            Some(link_info) => {
+                // Sort the chunks by score (highest first)
+                let mut chunks = doc_matches.get(doc_id).unwrap().clone();
+                chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Sort the chunks by score (highest first)
-        let mut chunks = doc_matches.get(doc_id).unwrap().clone();
-        chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        let chunk_list = chunks
-            .iter()
-            .map(|(_, chunk_id)| *chunk_id) // +1 for 1-indexed display
-            .collect::<Vec<_>>();
-        return_val.push((link_info, chunk_list));
+                let chunk_list = chunks
+                    .iter()
+                    .map(|(_, chunk_id)| *chunk_id) // +1 for 1-indexed display
+                    .collect::<Vec<_>>();
+                return_val.push((link_info, chunk_list));
+            }
+            None => {
+                console_log!("Link not found, id: {}", doc_id);
+            }
+        }
     }
 
     Ok(return_val)
+}
+
+/// Delete a link and all associated data
+pub async fn delete_link(env: &Env, link: &str) -> Result<DocInfo> {
+    console_log!("Deleting link: {}", link);
+
+    let link_info = d1::delete_link_by_url(env, link).await?;
+
+    d1::delete_from_bucket(env, &link_info.bucket_path).await?;
+
+    vector::delete_vectors_by_prefix(env, &link_info.id, link_info.chunk_count).await?;
+
+    let kv = env.kv("SEEN_KV")?;
+    kv.delete(&link_info.id).await?;
+    console_log!("Deleted KV entry with key: {}", link_info.id);
+
+    console_log!(
+        "Successfully deleted link and all associated data: {}",
+        link
+    );
+
+    Ok(link_info)
 }

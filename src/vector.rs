@@ -39,7 +39,10 @@ pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
     if response.status_code() != 200 {
         let error_text = response.text().await?;
         console_error!("Failed to generate embeddings: {}", error_text);
-        return Err(Error::from("Failed to generate embeddings"));
+        return Err(Error::from(format!(
+            "Failed to generate embeddings, error: {}",
+            error_text
+        )));
     }
 
     let embedding_response: EmbeddingResponse = response.json().await?;
@@ -155,4 +158,69 @@ pub async fn query_vectors_with_scores(
         .into_iter()
         .map(|m| (m.id, m.score, m.metadata))
         .collect())
+}
+
+/// Deletes vectors from the Vectorize index with IDs matching the document ID
+pub async fn delete_vectors_by_prefix(
+    env: &Env,
+    id_prefix: &str,
+    chunk_count: usize,
+) -> Result<()> {
+    let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
+    let api_token = env.secret(CF_API_TOKEN)?.to_string();
+
+    let url = format!(
+        "https://api.cloudflare.com/client/v4/accounts/{}/vectorize/v2/indexes/{}/delete_by_ids",
+        account_id, VECTORIZE_INDEX_NAME
+    );
+
+    // Construct vector IDs based on the document ID and chunk count
+    let mut vector_ids = Vec::with_capacity(chunk_count);
+    for i in 0..chunk_count {
+        vector_ids.push(format!("{}-{}", id_prefix, i));
+    }
+
+    let delete_payload = json!({
+        "ids": vector_ids
+    });
+
+    let mut headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_token))?;
+    headers.set("Content-Type", "application/json")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(
+            &serde_json::to_string(&delete_payload)?,
+        )));
+
+    let request = Request::new_with_init(&url, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        console_error!("Failed to delete vectors: {}", error_text);
+        return Err(Error::from("Failed to delete vectors"));
+    }
+
+    // Parse the response to check if success is true
+    let response_data: serde_json::Value = response.json().await?;
+    if !response_data
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        console_error!("Vector deletion reported failure: {:?}", response_data);
+        return Err(Error::from(format!(
+            "Vector deletion reported failure, response: {}",
+            response_data
+        )));
+    }
+
+    console_log!(
+        "Vectors deleted successfully for document ID: {}",
+        id_prefix
+    );
+    Ok(())
 }

@@ -39,7 +39,7 @@ pub async fn get_link_stats(env: Env) -> Result<(u64, Vec<DocInfo>)> {
 }
 
 /// Retrieve a link by its ID from the database
-pub async fn get_link_by_id(env: &Env, id: &str) -> Result<DocInfo> {
+pub async fn get_link_by_id(env: &Env, id: &str) -> Result<Option<DocInfo>> {
     let db = env.d1("SEEN_DB")?;
 
     let query = db
@@ -49,9 +49,9 @@ pub async fn get_link_by_id(env: &Env, id: &str) -> Result<DocInfo> {
         .await?;
 
     if let Some(row) = query {
-        Ok(row)
+        Ok(Some(row))
     } else {
-        Err(Error::from(format!("Link not found, id: {}", id)))
+        Ok(None)
     }
 }
 
@@ -103,4 +103,31 @@ pub async fn find_link_by_url(env: &Env, url: &str) -> Result<DocInfo> {
     } else {
         Err(Error::from("Link not found"))
     }
+}
+
+/// Delete a link from the database by URL
+pub async fn delete_link_by_url(env: &Env, url: &str) -> Result<DocInfo> {
+    // First, get the link info to return it later and for deletion references
+    let link_info = find_link_by_url(env, url).await?;
+
+    // Delete the link from the database
+    let db = env.d1("SEEN_DB")?;
+
+    let _delete_result = db
+        .prepare("DELETE FROM links WHERE url = ?")
+        .bind(&[url.into()])?
+        .run()
+        .await?;
+
+    console_log!("Deleted link from database, URL: {}", url);
+
+    Ok(link_info)
+}
+
+/// Delete content from R2 bucket
+pub async fn delete_from_bucket(env: &Env, bucket_path: &str) -> Result<()> {
+    let bucket = env.bucket("SEEN_BUCKET")?;
+    bucket.delete(bucket_path).await?;
+    console_log!("Deleted content from bucket, path: {}", bucket_path);
+    Ok(())
 }

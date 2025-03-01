@@ -18,11 +18,11 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
             // Generate a response based on the command
             let response = match text.as_str() {
                 "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
-                "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\nOr simply send a URL to save it, or any text to search for it.".to_string(),
+                "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\n/delete <url> - Delete a saved link\nOr simply send a URL to save it, or any text to search for it.".to_string(),
                 "/list" => list_links(env).await,
                 _ if text.starts_with("http://") || text.starts_with("https://") => {
                     // Get detailed information from handle_link
-                    match crate::handlers::handle_link(&env, &text).await {
+                    match crate::handlers::insert_link(&env, &text).await {
                         Ok(link_info) => {
                             format!(
                                 "✅ Document saved!\n\
@@ -44,6 +44,15 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                         "Please provide a search query, e.g., '/search cloudflare'".to_string()
                     } else {
                         search_query(env, query).await
+                    }
+                },
+                _ if text.starts_with("/delete ") => {
+                    // Extract the URL to delete
+                    let url = &text[8..].trim();
+                    if url.is_empty() {
+                        "Please provide a URL to delete, e.g., '/delete https://example.com'".to_string()
+                    } else {
+                        delete_link(env, url).await
                     }
                 },
                 _ => {
@@ -133,6 +142,27 @@ async fn search_query(env: Env, query: &str) -> String {
     }
 }
 
+async fn delete_link(env: Env, url: &str) -> String {
+    match crate::handlers::delete_link(&env, url).await {
+        Ok(link_info) => {
+            format!(
+                "✅ Successfully deleted:\n\
+                <b>URL:</b> {}\n\
+                <b>Title:</b> {}\n\
+                <b>Type:</b> {} {}\n",
+                link_info.url,
+                link_info.title,
+                format_type_emoji(&link_info.content_type),
+                link_info.content_type
+            )
+        },
+        Err(e) => {
+            console_error!("Error deleting link: {}", e);
+            format!("Error deleting link: {}", e)
+        }
+    }
+}
+
 /// Helper function to determine file type emoji based on content type
 pub fn format_type_emoji(content_type: &str) -> &'static str {
     match content_type.split(';').next().unwrap_or("") {
@@ -148,12 +178,14 @@ impl DocInfo {
     fn format_telegram_message(&self) -> String {
         format!(
             "<b>URL:</b> {}\n\
+            <b>Title:</b> {}\n\
             <b>Type:</b> {} {}\n\
             <b>Size:</b> {}\n\
             <b>Saved:</b> {}\n\
             <b>Chunks:</b> {}\n\
             <b>Summary:</b>\n{}\n",
             self.url,
+            self.title,
             format_type_emoji(&self.content_type),
             self.content_type,
             crate::utils::format_size(self.size),
