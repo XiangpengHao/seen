@@ -31,8 +31,8 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
                             )
                         }
                         Err(e) => {
-                            console_error!("Error handling link: {}", e);
-                            format!("Error handling link: {}", e)
+                            console_error!("Error handling link: {}, error: {}", text, e);
+                            format!("Error handling link: {}, error: {}", text, e)
                         }
                     }
                    
