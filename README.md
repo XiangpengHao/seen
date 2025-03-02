@@ -7,11 +7,11 @@ Seen is a simple personal knowledge management tool made for impatient people li
 
 ## Features
 
-- Dead simple, just send a link, and search later from whatever you still remember.
+- Dead simple, just send a link, and search later for whatever you still remember.
 
-- A simple telegram bot, no bloatware.
+- Just a simple telegram bot, no bloatware.
 
-- It cures my allergic to AI by using a lot of AI in this project: document processing, vector search, etc.
+- Cures your allergic to AI by using a lot of AI in this project: document processing, vector search, etc.
 
 ## Demo
 ![demo](doc/demo.jpg)
