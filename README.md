@@ -13,6 +13,8 @@ Seen is a simple personal knowledge management tool made for impatient people li
 
 - It cures my allergic to AI by using a lot of AI in this project: document processing, vector search, etc.
 
+## Demo
+![demo](doc/demo.jpg)
 
 ## Hosted service
 Let me know if you are interested in a hosted version of Seen.
