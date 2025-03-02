@@ -1,52 +1,72 @@
-# Seen 
 
-Personal knowledge management for the impatient.
+![Seen Logo](docs/seen-logo.png)
 
 Read something but forget where it was? Seen remembers what you have seen.
+
+Seen is a simple personal knowledge management tool made for impatient people like me.
 
 ## Features
 
 - Dead simple, just send a link, and search later from whatever you still remember.
-- Even more impatient? Install Seen as a browser extension and save any webpage you browse.
 
-## Setup Instructions
+- A simple telegram bot, no bloatware.
+
+- It cures my allergic to AI by using a lot of AI in this project: document processing, vector search, etc.
+
+
+## Hosted service
+Let me know if you are interested in a hosted version of Seen.
+
+
+## Self-hosting 
 
 ### 1. Create a Telegram Bot
 
-First, you need to create a Telegram bot and get an API token:
-
-1. Open Telegram and search for `@BotFather`
-2. Start a chat with BotFather by clicking on the "Start" button
-3. Send the `/newbot` command to create a new bot
-4. Follow the prompts to choose a name and username for your bot
-5. Once created, BotFather will provide you with a token (keep this token secure!)
+Create a Telegram bot (from [@BotFather](https://t.me/BotFather)) and get an API token.
 
 ### 2. Configure Cloudflare Workers
 
-1. Make sure you have [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) installed and configured:
-   ```bash
-   npm install -g wrangler
-   wrangler login
-   ```
+Login to Cloudflare:
+```bash
+npx wrangler login
+```
 
-2. Clone this repository
-   ```bash
-   git clone <repository-url>
-   cd <repository-directory>
-   ```
+Clone this repository
+```bash
+git clone https://github.com/XiangpengHao/seen.git
+cd seen
+```
 
-3. Add your Telegram bot token to Cloudflare Workers as a secret:
-   ```bash
-   wrangler secret put BOT_TOKEN
-   ```
-   When prompted, paste your Telegram bot token.
+#### Setup Telegram 
+Add your Telegram bot token to Cloudflare Workers as a secret:
+```bash
+wrangler secret put BOT_TOKEN
+```
+When prompted, paste your Telegram bot token.
+
+#### Setup CloudFlare
+Add your [CloudFlare account ID and API token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) to Cloudflare Workers as secrets:
+```bash
+wrangler secret put CF_ACCOUNT_ID
+wrangler secret put CF_API_TOKEN
+```
+
+#### Setup Gemini
+Seen use Gemini to process documents. You can get a free API key from [Gemini API](https://ai.google.dev/gemini-api/docs/quickstart).
+
+Add your Gemini API key to Cloudflare Workers as a secret:
+```bash
+wrangler secret put GEMINI_API_KEY
+```
+
+
 
 ### 3. Build and Deploy to Cloudflare Workers
 
 Build and deploy your bot to Cloudflare Workers:
 
 ```bash
-wrangler publish
+npx wrangler deploy
 ```
 
 This will deploy your bot and give you a URL (something like `https://your-bot.your-username.workers.dev`).
@@ -67,14 +87,5 @@ You should see a response like:
 ```
 
 
-
-## Development
-### Add a new column to the table:
-```SQL
-ALTER TABLE links ADD COLUMN chunk_count INTEGER DEFAULT 0;
-```
-
-
 ## License
-
 MIT 
