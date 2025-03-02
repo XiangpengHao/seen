@@ -1,5 +1,5 @@
 
-<p align="center"> <img src="/dev/doc/logo.png" alt="seen_logo" width="450"/> </p>
+<p align="center"> <img src="/doc/logo.png" alt="seen_logo" width="450"/> </p>
 
 Read something but forget where it was? Seen remembers what you have seen.
 
