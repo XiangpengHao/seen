@@ -134,8 +134,9 @@ pub async fn chunk_and_summary_link(
         "Convert the following content into Markdown. Tables should be formatted as markdown tables. \
         Figures should be described in the text, text in the figures should be extracted. \
         Do not surround your output with triple backticks. \
-        Chunk the document into sections of roughly 1000 - 2000 words. Our goal is to identify parts of the page with same semantic \
-        theme. These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
+        Chunk the document into sections of roughly 1000 tokens. Our goal is to identify parts of the page with same semantic theme. \
+        If the document is large, you should summarize the chunks so that the total number of output tokens is less than 8000. \
+        These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
         You should generate a two sentence summary of the document, with dense and concise brief, \
         output in the summary field.\n\n\
         You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n"
