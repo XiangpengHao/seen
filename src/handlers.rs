@@ -30,6 +30,7 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
     // Process the content with Gemini API
     console_log!("Processing content with Gemini API from: {}", link);
     let processed_data = chunk_and_summary_link(env, &content, &content_type).await?;
+    console_log!("Processed data: {:?}", processed_data);
 
     let row = DocInfo {
         id: link_id.clone(),
@@ -61,10 +62,6 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
     // TODO: how to make sure these steps are atomic?
     d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
     d1::save_link_to_db(env, &row).await?;
-    let kv = env.kv("SEEN_KV")?;
-    kv.put(&link_id, &processed_data)?.execute().await?;
-    console_log!("Stored processed data in KV with key: {}", link_id);
-
     Ok(row)
 }
 
@@ -145,10 +142,6 @@ pub async fn delete_link(env: &Env, link: &str) -> Result<DocInfo> {
     d1::delete_from_bucket(env, &link_info.bucket_path).await?;
 
     vector::delete_vectors_by_prefix(env, &link_info.id, link_info.chunk_count).await?;
-
-    let kv = env.kv("SEEN_KV")?;
-    kv.delete(&link_info.id).await?;
-    console_log!("Deleted KV entry with key: {}", link_info.id);
 
     console_log!(
         "Successfully deleted link and all associated data: {}",

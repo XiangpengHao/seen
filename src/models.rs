@@ -8,17 +8,38 @@ pub struct Update {
     pub message: Option<Message>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Message {
     pub message_id: i64,
     pub chat: Chat,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub from: Option<User>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Chat {
     pub id: i64,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub type_field: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct User {
+    pub id: i64,
+    #[serde(default)]
+    pub first_name: Option<String>,
+    #[serde(default)]
+    pub last_name: Option<String>,
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 // ===== Vector Database Models =====

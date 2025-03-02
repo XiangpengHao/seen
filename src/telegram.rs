@@ -6,68 +6,82 @@ use worker::*;
 const BOT_TOKEN: &str = "BOT_TOKEN";
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 
+const AUTHORIZED_CHAT_IDS: [i64; 3] = [
+    132580810,   // Haooooxiangpeng
+    -4588732846, // ADSL
+    -4230053857, // Xiangpeng & Ruichao, Ao
+];
+
+fn check_id(id: i64) -> bool {
+    AUTHORIZED_CHAT_IDS.contains(&id)
+}
+
 /// Processes an update from Telegram webhook
 pub async fn process_update(env: Env, update: Update) -> Result<()> {
     let token = env.secret(BOT_TOKEN)?.to_string();
 
-    // Check if the update contains a message with text
-    if let Some(message) = update.message {
-        if let Some(text) = message.text {
-            console_log!("Received message: {}", text);
+    let Some(message) = &update.message else {
+        return Ok(());
+    };
 
-            // Generate a response based on the command
-            let response = match text.as_str() {
-                "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
-                "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\n/delete <url> - Delete a saved link\nOr simply send a URL to save it, or any text to search for it.".to_string(),
-                "/list" => list_links(env).await,
-                _ if text.starts_with("http://") || text.starts_with("https://") => {
-                    // Get detailed information from handle_link
-                    match crate::handlers::insert_link(&env, &text).await {
-                        Ok(link_info) => {
-                            format!(
-                                "✅ Document saved!\n\
-                                {}",
-                                link_info.format_telegram_message()
-                            )
-                        }
-                        Err(e) => {
-                            console_error!("Error handling link: {}, error: {}", text, e);
-                            format!("Error handling link: {}, error: {}", text, e)
-                        }
-                    }
-                   
-                },
-                _ if text.starts_with("/search ") => {
-                    // Extract the search query
-                    let query = &text[8..];
-                    if query.trim().is_empty() {
-                        "Please provide a search query, e.g., '/search cloudflare'".to_string()
-                    } else {
-                        search_query(env, query).await
-                    }
-                },
-                _ if text.starts_with("/delete ") => {
-                    // Extract the URL to delete
-                    let url = &text[8..].trim();
-                    if url.is_empty() {
-                        "Please provide a URL to delete, e.g., '/delete https://example.com'".to_string()
-                    } else {
-                        delete_link(env, url).await
-                    }
-                },
-                _ => {
-                    search_query(env, &text).await
-                }
-            };
+    let chat_id = message.chat.id;
+    let Some(text) = &message.text else {
+        return Ok(());
+    };
 
-            // Send the response back to the user
-            send_message(&token, message.chat.id, response.as_str()).await?;
-        }
+    console_log!("Received message: {} from chat_id: {}", text, chat_id);
+
+    if !check_id(chat_id) {
+        let message = format!(
+            "Sorry, you are not authorized to use this bot. Send this message to bot owner to get access:<pre>{:#?}</pre>",
+            update.message.as_ref().unwrap()
+        );
+        send_message(&token, chat_id, message.as_str()).await?;
+        return Ok(());
     }
+
+    // Chat is authorized, process commands
+    let response = match text.as_str() {
+        "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
+        "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\n/delete <url> - Delete a saved link\nOr simply send a URL to save it, or any text to search for it.".to_string(),
+        "/list" => list_links(env).await,
+        _ if text.starts_with("/insert") => {
+            let url = &text[7..].trim();
+            if url.is_empty() {
+                "Please provide a URL to insert, e.g., '/insert https://example.com'".to_string()
+            } else {
+                insert_link(env, url).await
+            }
+        },
+        _ if text.starts_with("http://") || text.starts_with("https://") => {
+            insert_link(env, &text).await
+        },
+        _ if text.starts_with("/search ") => {
+            let query = &text[8..];
+            if query.trim().is_empty() {
+                "Please provide a search query, e.g., '/search cloudflare'".to_string()
+            } else {
+                search_query(env, query).await
+            }
+        },
+        _ if text.starts_with("/delete ") => {
+            let url = &text[8..].trim();
+            if url.is_empty() {
+                "Please provide a URL to delete, e.g., '/delete https://example.com'".to_string()
+            } else {
+                delete_link(env, url).await
+            }
+        },
+        _ => {
+            search_query(env, &text).await
+        }
+    };
+
+    // Send the response back to the user
+    send_message(&token, chat_id, response.as_str()).await?;
 
     Ok(())
 }
-
 
 /// Sends a message to a Telegram chat
 pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
@@ -95,46 +109,71 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
 
     // Check status code
     if response.status_code() != 200 {
-        console_error!("Failed to send message: Status {}, message: {}", response.status_code(), body.to_string());
+        console_error!(
+            "Failed to send message: Status {}, message: {}",
+            response.status_code(),
+            body.to_string()
+        );
         return Err(Error::from("Failed to send message"));
     }
 
     Ok(())
 }
 
+async fn insert_link(env: Env, url: &str) -> String {
+    match crate::handlers::insert_link(&env, &url).await {
+        Ok(link_info) => {
+            format!(
+                "✅ Document saved!\n\
+                {}",
+                link_info.format_telegram_message()
+            )
+        }
+        Err(e) => {
+            console_error!("Error handling link: {}, error: {}", url, e);
+            format!("Error handling link: {}, error: {}", url, e)
+        }
+    }
+}
+
 async fn list_links(env: Env) -> String {
     match crate::d1::get_link_stats(env).await {
         Ok((count, rows)) => {
-            let mut ret = format!("Total links saved: {}\n\n", count);
-            for row in rows {
-                ret.push_str(&row.format_telegram_message());
+            let mut ret = format!("Total links saved: <b>{}</b>\n\n", count);
+            for (i, row) in rows.iter().enumerate() {
+                ret.push_str(&format!(
+                    "<b>{}.</b> {} <a href=\"{}\">{}</a>\n\n",
+                    i + 1,
+                    format_type_emoji(&row.content_type),
+                    row.url,
+                    row.title
+                ));
             }
             ret
-        },
+        }
         Err(e) => {
             console_error!("Error listing links: {}", e);
             format!("Error listing links: {}", e)
         }
     }
 }
+
 async fn search_query(env: Env, query: &str) -> String {
     let result = crate::handlers::search_links(env, query).await;
     match result {
         Ok(response) => {
             let mut ret = format!("🔍 Search results for '{}'\n\n", query);
-            for (i, (link_info, chunk_list)) in response.into_iter().enumerate() {
+            for (i, (link_info, _chunk_list)) in response.into_iter().enumerate() {
                 ret.push_str(&format!(
-                    "{}. {} <b>{}</b> \n(chunks: {})\n{}\n{}\n\n",
+                    "<b>{}.</b> {} <a href=\"{}\">{}</a>\n\n",
                     i + 1,
                     crate::telegram::format_type_emoji(&link_info.content_type),
-                    link_info.title,
-                    chunk_list.iter().map(|chunk_id| chunk_id.to_string()).collect::<Vec<String>>().join(", "),
                     link_info.url,
-                    link_info.summary
+                    link_info.title,
                 ));
             }
             ret
-        },
+        }
         Err(e) => {
             console_error!("Error searching links: {}", e);
             format!("Error searching links: {}", e)
@@ -155,7 +194,7 @@ async fn delete_link(env: Env, url: &str) -> String {
                 format_type_emoji(&link_info.content_type),
                 link_info.content_type
             )
-        },
+        }
         Err(e) => {
             console_error!("Error deleting link: {}", e);
             format!("Error deleting link: {}", e)
@@ -177,19 +216,13 @@ pub fn format_type_emoji(content_type: &str) -> &'static str {
 impl DocInfo {
     fn format_telegram_message(&self) -> String {
         format!(
-            "<b>URL:</b> {}\n\
-            <b>Title:</b> {}\n\
-            <b>Type:</b> {} {}\n\
-            <b>Size:</b> {}\n\
-            <b>Saved:</b> {}\n\
-            <b>Chunks:</b> {}\n\
+            "{}<a href=\"{}\">{}</a>\n\
+            <b>Size:</b> {} ({} chunks)\n\
             <b>Summary:</b>\n{}\n",
+            format_type_emoji(&self.content_type),
             self.url,
             self.title,
-            format_type_emoji(&self.content_type),
-            self.content_type,
             crate::utils::format_size(self.size),
-            self.created_at,
             self.chunk_count,
             self.summary
         )

@@ -14,7 +14,6 @@ crate-type = ["cdylib"]
 [dependencies]
 worker = { version = "0.5.0", features = ['http', "d1"] }
 worker-macros = { version = "0.5.0", features = ['http'] }
-worker-kv = { version = "0.8.0" }
 tower-service = "0.3.2"
 console_error_panic_hook = { version = "0.1.1" }
 serde = { version = "1.0", features = ["derive"] }
