@@ -130,7 +130,7 @@ pub async fn chunk_and_summary_link(
     content: &[u8],
     content_type: &str,
 ) -> Result<ProcessedLinkData> {
-    let prompt = format!(
+    let prompt = 
         "Convert the following content into Markdown. Tables should be formatted as markdown tables. \
         Figures should be described in the text, text in the figures should be extracted. \
         Do not surround your output with triple backticks. \
@@ -140,7 +140,7 @@ pub async fn chunk_and_summary_link(
         You should generate a two sentence summary of the document, with dense and concise brief, \
         output in the summary field.\n\n\
         You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n"
-    );
+    ;
 
     let schema = serde_json::json!({
         "type": "object",
@@ -167,7 +167,7 @@ pub async fn chunk_and_summary_link(
 
     // Pass the content to Gemini API
     let response_text =
-        gemini_api_request(env, &prompt, Some((content_type, content)), Some(schema)).await?;
+        gemini_api_request(env, prompt, Some((content_type, content)), Some(schema)).await?;
 
     // Parse the response into our structured type
     let data: ProcessedLinkData = serde_json::from_str(&response_text).map_err(|e| {

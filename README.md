@@ -47,7 +47,7 @@ cd seen
 1. Add your Telegram bot token to Cloudflare Workers as a secret:
 
     ```bash
-    wrangler secret put BOT_TOKEN
+    npx wrangler secret put BOT_TOKEN
     ```
     
     When prompted, paste your Telegram bot token.
@@ -72,8 +72,8 @@ cd seen
 #### Setup CloudFlare
 Add your [CloudFlare account ID and API token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) to Cloudflare Workers as secrets:
 ```bash
-wrangler secret put CF_ACCOUNT_ID
-wrangler secret put CF_API_TOKEN
+npx wrangler secret put CF_ACCOUNT_ID
+npx wrangler secret put CF_API_TOKEN
 ```
 
 #### Setup Gemini
@@ -81,7 +81,7 @@ Seen use Gemini to process documents. You can get a free API key from [Gemini AP
 
 Add your Gemini API key to Cloudflare Workers as a secret:
 ```bash
-wrangler secret put GEMINI_API_KEY
+npx wrangler secret put GEMINI_API_KEY
 ```
 
 #### Setup D1 database
