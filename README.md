@@ -22,6 +22,9 @@ Let me know if you are interested in a hosted version of Seen.
 
 ## Self-hosting 
 
+Setting up the self-hosted version is a bit complicated. Please let me know if there are any issues.
+Self-hosting uses Cloudflare free-tier, should be more than enough for personal use.
+
 ### 1. Create a Telegram Bot
 
 Create a Telegram bot (from [@BotFather](https://t.me/BotFather)) and get an API token.
@@ -62,6 +65,22 @@ wrangler secret put GEMINI_API_KEY
 ```
 
 #### Setup D1 database
+```bash
+npx wrangler d1 create seen
+```
+Now you should copy the output to the corresponding field in `wrangler.toml`, e.g.
+
+```toml
+[[d1_databases]]
+binding = "SEEN_DB"
+database_name = "seen"
+database_id = "bba483bb-4377-46f1-a8d4-df83772edc95"
+```
+
+Configure the database:
+```bash
+npx wrangler d1 execute seen --command "SQL_BELOW"
+```
 
 ```sql
 CREATE TABLE IF NOT EXISTS links (
@@ -79,9 +98,6 @@ CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
 CREATE INDEX IF NOT EXISTS idx_links_id ON links(id);
 ```
 
-```bash
-npx wrangler d1 execute seen --command "SQL_ABOVE"
-```
 
 #### Setup Vectorize
 ```bash
