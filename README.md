@@ -61,6 +61,32 @@ Add your Gemini API key to Cloudflare Workers as a secret:
 wrangler secret put GEMINI_API_KEY
 ```
 
+#### Setup D1 database
+
+```sql
+CREATE TABLE IF NOT EXISTS links (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    bucket_path TEXT NOT NULL,
+    content_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    chunk_count INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_links_url ON links(url);
+CREATE INDEX IF NOT EXISTS idx_links_id ON links(id);
+```
+
+```bash
+npx wrangler d1 execute seen --command "SQL_ABOVE"
+```
+
+#### Setup Vectorize
+```bash
+npx wrangler vectorize create seen-index --dimensions=768 --metric=cosine
+```
 
 
 ### 3. Build and Deploy to Cloudflare Workers
