@@ -6,14 +6,18 @@ use worker::*;
 const BOT_TOKEN: &str = "BOT_TOKEN";
 const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 
-const AUTHORIZED_CHAT_IDS: [i64; 3] = [
-    132580810,   // Haooooxiangpeng
-    -4588732846, // ADSL
-    -4230053857, // Xiangpeng & Ruichao, Ao
-];
+fn get_authorized_chat_ids(env: Env) -> Vec<i64> {
+    let authorized_chat_ids_str = env.var("AUTHORIZED_CHAT_IDS").unwrap();
+    
+    authorized_chat_ids_str
+        .to_string()
+        .split(',')
+        .filter_map(|id_str| id_str.trim().parse::<i64>().ok())
+        .collect()
+}
 
-fn check_id(id: i64) -> bool {
-    AUTHORIZED_CHAT_IDS.contains(&id)
+fn check_id(env: Env, id: i64) -> bool {
+    get_authorized_chat_ids(env).contains(&id)
 }
 
 /// Processes an update from Telegram webhook
@@ -31,7 +35,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
 
     console_log!("Received message: {} from chat_id: {}", text, chat_id);
 
-    if !check_id(chat_id) {
+    if !check_id(env.clone(), chat_id) {
         let message = format!(
             "Sorry, you are not authorized to use this bot. Send this message to bot owner to get access:<pre>{:#?}</pre>",
             update.message.as_ref().unwrap()
@@ -92,7 +96,6 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     let body = json!({
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML"
     });
 
     // Send the request

@@ -42,12 +42,32 @@ git clone https://github.com/XiangpengHao/seen.git
 cd seen
 ```
 
-#### Setup Telegram 
-Add your Telegram bot token to Cloudflare Workers as a secret:
-```bash
-wrangler secret put BOT_TOKEN
-```
-When prompted, paste your Telegram bot token.
+#### Setup Telegram
+
+1. Add your Telegram bot token to Cloudflare Workers as a secret:
+
+    ```bash
+    wrangler secret put BOT_TOKEN
+    ```
+    
+    When prompted, paste your Telegram bot token.
+
+2. Get your Chat ID by sending a message to your bot and then visiting: 
+
+    ```
+    https://api.telegram.org/bot<BOT_TOKEN>/getUpdates
+    ```
+    
+    Replace <BOT_TOKEN> with your actual bot token. Look for the `chat` object in the response and find your `id`.
+
+3. Add your Chat ID to the environment variables in your wrangler.toml file:
+
+    ```toml
+    [vars]
+    AUTHORIZED_CHAT_IDS = "YOUR_CHAT_ID"
+    ```
+
+    Replace YOUR_CHAT_ID with the chat ID you obtained in the previous step. For multiple authorized users, separate IDs with commas: "ID1,ID2,ID3".
 
 #### Setup CloudFlare
 Add your [CloudFlare account ID and API token](https://developers.cloudflare.com/fundamentals/api/get-started/account-owned-tokens/) to Cloudflare Workers as secrets:
@@ -79,7 +99,7 @@ database_id = "bba483bb-4377-46f1-a8d4-df83772edc95"
 
 Configure the database:
 ```bash
-npx wrangler d1 execute seen --command "SQL_BELOW"
+npx wrangler d1 execute seen --command "SQL_BELOW" --remote
 ```
 
 ```sql
