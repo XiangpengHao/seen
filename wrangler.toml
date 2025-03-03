@@ -25,3 +25,6 @@ index_name = "seen-index"
 
 [ai]
 binding = "AI"
+
+[vars]
+AUTHORIZED_CHAT_IDS = "132580810,-4588732846,-4230053857"
