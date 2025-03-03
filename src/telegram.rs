@@ -8,7 +8,7 @@ const TELEGRAM_API_BASE: &str = "https://api.telegram.org/bot";
 
 fn get_authorized_chat_ids(env: Env) -> Vec<i64> {
     let authorized_chat_ids_str = env.var("AUTHORIZED_CHAT_IDS").unwrap();
-    
+
     authorized_chat_ids_str
         .to_string()
         .split(',')
@@ -47,7 +47,14 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
     // Chat is authorized, process commands
     let response = match text.as_str() {
         "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
-        "/help" => "Available commands:\n/start - Start the bot\n/help - Show this help message\n/list - Show link statistics\n/search <query> - Search through saved links\n/delete <url> - Delete a saved link\nOr simply send a URL to save it, or any text to search for it.".to_string(),
+        "/help" => "Available commands:
+/start - Start the bot
+/help - Show this help message
+/list - Show link statistics
+/search [query] - Search through saved links
+/delete [url] - Delete a saved link
+Or simply send a URL to save it, or any text to search for it."
+            .to_string(),
         "/list" => list_links(env).await,
         _ if text.starts_with("/insert") => {
             let url = &text[7..].trim();
@@ -56,10 +63,10 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
             } else {
                 insert_link(env, url).await
             }
-        },
+        }
         _ if text.starts_with("http://") || text.starts_with("https://") => {
-            insert_link(env, &text).await
-        },
+            insert_link(env, text).await
+        }
         _ if text.starts_with("/search ") => {
             let query = &text[8..];
             if query.trim().is_empty() {
@@ -67,7 +74,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
             } else {
                 search_query(env, query).await
             }
-        },
+        }
         _ if text.starts_with("/delete ") => {
             let url = &text[8..].trim();
             if url.is_empty() {
@@ -75,10 +82,8 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
             } else {
                 delete_link(env, url).await
             }
-        },
-        _ => {
-            search_query(env, &text).await
         }
+        _ => search_query(env, text).await,
     };
 
     // Send the response back to the user
@@ -96,6 +101,7 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
     let body = json!({
         "chat_id": chat_id,
         "text": text,
+        "parse_mode": "HTML",
     });
 
     // Send the request
@@ -124,7 +130,7 @@ pub async fn send_message(token: &str, chat_id: i64, text: &str) -> Result<()> {
 }
 
 async fn insert_link(env: Env, url: &str) -> String {
-    match crate::handlers::insert_link(&env, &url).await {
+    match crate::handlers::insert_link(&env, url).await {
         Ok(link_info) => {
             format!(
                 "✅ Document saved!\n\

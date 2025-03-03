@@ -24,16 +24,16 @@ pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
 
     // First attempt
     match generate_embedding_attempt(&url, &api_token, &embedding_req).await {
-        Ok(embeddings) => return Ok(embeddings),
+        Ok(embeddings) => Ok(embeddings),
         Err(e) => {
             console_error!("First embedding attempt failed: {}, retrying once...", e);
-            
+
             // Retry once
             match generate_embedding_attempt(&url, &api_token, &embedding_req).await {
-                Ok(embeddings) => return Ok(embeddings),
+                Ok(embeddings) => Ok(embeddings),
                 Err(e) => {
                     console_error!("Retry embedding attempt also failed: {}", e);
-                    return Err(e);
+                    Err(e)
                 }
             }
         }
@@ -41,7 +41,11 @@ pub async fn generate_embeddings(env: &Env, text: &str) -> Result<Vec<f32>> {
 }
 
 /// Helper function for a single embedding generation attempt
-async fn generate_embedding_attempt(url: &str, api_token: &str, embedding_req: &EmbeddingRequest) -> Result<Vec<f32>> {
+async fn generate_embedding_attempt(
+    url: &str,
+    api_token: &str,
+    embedding_req: &EmbeddingRequest,
+) -> Result<Vec<f32>> {
     let mut headers = Headers::new();
     headers.set("Authorization", &format!("Bearer {}", api_token))?;
     headers.set("Content-Type", "application/json")?;
