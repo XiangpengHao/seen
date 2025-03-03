@@ -47,14 +47,16 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
     // Chat is authorized, process commands
     let response = match text.as_str() {
         "/start" => "Hello! I'm Seen, your knowledge assistant!".to_string(),
-        "/help" => "Available commands:
+        "/help" => html_escape::encode_text(
+            "Available commands:
 /start - Start the bot
 /help - Show this help message
 /list - Show link statistics
-/search [query] - Search through saved links
-/delete [url] - Delete a saved link
-Or simply send a URL to save it, or any text to search for it."
-            .to_string(),
+/search <query> - Search through saved links
+/delete <url> - Delete a saved link
+Or simply send a URL to save it, or any text to search for it.",
+        )
+        .to_string(),
         "/list" => list_links(env).await,
         _ if text.starts_with("/insert") => {
             let url = &text[7..].trim();
@@ -155,7 +157,7 @@ async fn list_links(env: Env) -> String {
                     i + 1,
                     format_type_emoji(&row.content_type),
                     row.url,
-                    row.title
+                    html_escape::encode_text(&row.title),
                 ));
             }
             ret
@@ -178,7 +180,7 @@ async fn search_query(env: Env, query: &str) -> String {
                     i + 1,
                     crate::telegram::format_type_emoji(&link_info.content_type),
                     link_info.url,
-                    link_info.title,
+                    html_escape::encode_text(&link_info.title),
                 ));
             }
             ret
@@ -199,7 +201,7 @@ async fn delete_link(env: Env, url: &str) -> String {
                 <b>Title:</b> {}\n\
                 <b>Type:</b> {} {}\n",
                 link_info.url,
-                link_info.title,
+                html_escape::encode_text(&link_info.title),
                 format_type_emoji(&link_info.content_type),
                 link_info.content_type
             )
@@ -230,10 +232,10 @@ impl DocInfo {
             <b>Summary:</b>\n{}\n",
             format_type_emoji(&self.content_type),
             self.url,
-            self.title,
+            html_escape::encode_text(&self.title),
             crate::utils::format_size(self.size),
             self.chunk_count,
-            self.summary
+            html_escape::encode_text(&self.summary)
         )
     }
 }
