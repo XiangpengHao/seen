@@ -90,7 +90,17 @@ pub struct VectorQueryResult {
 #[derive(Deserialize)]
 pub struct VectorMatch {
     pub id: String,
-    #[allow(dead_code)]
     pub score: f32,
-    pub metadata: VectorMetadata,
+}
+
+#[derive(Deserialize)]
+pub struct VectorGetResponse {
+    pub result: Vec<VectorGetResult>,
+    pub success: bool,
+}
+
+#[derive(Deserialize)]
+pub struct VectorGetResult {
+    pub values: Vec<f32>,
+    pub id: String,
 }

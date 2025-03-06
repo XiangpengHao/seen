@@ -62,6 +62,21 @@ pub async fn save_to_bucket(env: &Env, bucket_path: &str, content: Vec<u8>) -> R
     Ok(())
 }
 
+pub async fn read_from_bucket(env: &Env, bucket_path: &str) -> Result<Vec<u8>> {
+    let bucket = env.bucket("SEEN_BUCKET")?;
+    let content = bucket
+        .get(bucket_path)
+        .execute()
+        .await?
+        .ok_or(Error::from("Content not found"))?;
+    let bytes = content
+        .body()
+        .ok_or(Error::from("Content not found"))?
+        .bytes()
+        .await?;
+    Ok(bytes.to_vec())
+}
+
 /// Save link metadata to database
 pub async fn save_link_to_db(env: &Env, row: &DocInfo) -> Result<()> {
     let d1 = env.d1("SEEN_DB")?;
@@ -130,4 +145,12 @@ pub async fn delete_from_bucket(env: &Env, bucket_path: &str) -> Result<()> {
     bucket.delete(bucket_path).await?;
     console_log!("Deleted content from bucket, path: {}", bucket_path);
     Ok(())
+}
+
+pub async fn get_all_links(env: &Env) -> Result<Vec<DocInfo>> {
+    let d1 = env.d1("SEEN_DB")?;
+    let links_stmt = d1.prepare("SELECT * FROM links order by created_at desc");
+    let links_result = links_stmt.run().await?;
+    let rows = links_result.results::<DocInfo>()?;
+    Ok(rows)
 }

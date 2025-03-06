@@ -130,7 +130,7 @@ npx wrangler vectorize create seen-index --dimensions=768 --metric=cosine
 Build and deploy your bot to Cloudflare Workers:
 
 ```bash
-npx wrangler deploy
+env RUSTFLAGS='--cfg getrandom_backend="wasm_js"' npx wrangler deploy
 ```
 
 This will deploy your bot and give you a URL (something like `https://your-bot.your-username.workers.dev`).

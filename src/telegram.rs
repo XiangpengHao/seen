@@ -1,5 +1,10 @@
-use crate::{d1::DocInfo, models::Update};
+use crate::{
+    d1::{read_from_bucket, save_to_bucket, DocInfo},
+    models::Update,
+    vector,
+};
 use serde_json::json;
+use vector_lite::ANNIndexOwned;
 use worker::*;
 
 // Telegram API constants
@@ -58,6 +63,13 @@ Or simply send a URL to save it, or any text to search for it.",
         )
         .to_string(),
         "/list" => list_links(env).await,
+        "/upgrade" => match upgrade_vector_index(env).await {
+            Ok((total_ids, migrated)) => format!(
+                "Vector index upgraded. Total IDs: {}, Migrated: {}",
+                total_ids, migrated
+            ),
+            Err(e) => format!("Error upgrading vector index: {}", e),
+        },
         _ if text.starts_with("/insert") => {
             let url = &text[7..].trim();
             if url.is_empty() {
@@ -92,6 +104,42 @@ Or simply send a URL to save it, or any text to search for it.",
     send_message(&token, chat_id, response.as_str()).await?;
 
     Ok(())
+}
+
+pub async fn upgrade_vector_index(env: Env) -> Result<(usize, usize)> {
+    let mut index = match read_from_bucket(&env, "vector_lite.bin").await {
+        Ok(existing) => vector_lite::VectorLite::<768>::from_bytes(&existing),
+        Err(_e) => vector_lite::VectorLite::<768>::new(3, 30),
+    };
+
+    let links = crate::d1::get_all_links(&env).await?;
+
+    let mut ids = vec![];
+    for link in links {
+        let id = link.id.as_str();
+        for chunk in 0..link.chunk_count {
+            let vector_id = format!("{}-{}", id, chunk);
+            ids.push(vector_id);
+        }
+    }
+
+    let total_ids = ids.len();
+    let mut migrated = index.len();
+
+    let new_ids = ids.iter().skip(index.len()).collect::<Vec<_>>();
+    // Get vectors in batches of 20
+    for chunk in new_ids.chunks(20).take(30) {
+        let chunk_as_str: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
+        let chunk_vectors = vector::get_vector_by_id(&env, &chunk_as_str).await?;
+        migrated += chunk.len();
+
+        for (id, vector) in chunk.into_iter().zip(chunk_vectors) {
+            index.insert(vector, id.to_string());
+        }
+    }
+    let bytes = index.to_bytes();
+    save_to_bucket(&env, "vector_lite.bin", bytes).await?;
+    Ok((total_ids, migrated))
 }
 
 /// Sends a message to a Telegram chat
@@ -174,7 +222,7 @@ async fn search_query(env: Env, query: &str) -> String {
     match result {
         Ok(response) => {
             let mut ret = format!("🔍 Search results for '{}'\n\n", query);
-            for (i, (link_info, _chunk_list)) in response.into_iter().enumerate() {
+            for (i, link_info) in response.into_iter().enumerate() {
                 ret.push_str(&format!(
                     "<b>{}.</b> {} <a href=\"{}\">{}</a>\n\n",
                     i + 1,

@@ -1,5 +1,5 @@
 use crate::d1::{self, DocInfo};
-use crate::models::{Update, VectorMetadata};
+use crate::models::Update;
 use crate::utils::{chunk_and_summary_link, fetch_content, get_extension_from_content_type};
 use crate::vector;
 use uuid::Uuid;
@@ -52,11 +52,7 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
 
     for (i, embedding) in embeddings.into_iter().enumerate() {
         let vector_id = format!("{}-{}", link_id, i);
-        let vector_metadata = VectorMetadata {
-            document_id: link_id.clone(),
-            chunk_id: i as u64,
-        };
-        vector::insert_vector(env, &vector_id, vector_metadata, embedding).await?;
+        vector::insert_vector(env, &vector_id, embedding).await?;
     }
 
     // TODO: how to make sure these steps are atomic?
@@ -73,56 +69,41 @@ fn get_bucket_path(content_type: &str, link_id: &str) -> String {
 
 /// Search links using vector similarity
 /// Returns a list of links and their chunks
-pub async fn search_links(env: Env, query: &str) -> Result<Vec<(DocInfo, Vec<u64>)>> {
+pub async fn search_links(env: Env, query: &str) -> Result<Vec<DocInfo>> {
     console_log!("Searching for: {}", query);
 
     // Query the vector database to get vector IDs and scores
-    let vector_results = vector::query_vectors_with_scores(&env, query, 20).await?;
+    // let mut vector_results = vector::query_vectors_with_scores(&env, query, 20).await?;
+    let mut vector_results = vector::query_vectors_with_scores_vector_lite(&env, query, 20).await?;
 
     if vector_results.is_empty() {
         return Ok(vec![]);
     }
 
-    // Group results by document ID to collect all chunks from the same document
-    // Map of document_id -> Vec<(score, chunk_id)>
-    let mut doc_matches: std::collections::HashMap<String, Vec<(f32, u64)>> =
-        std::collections::HashMap::new();
+    vector_results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Also track the best score for each document for sorting
-    let mut doc_best_scores: std::collections::HashMap<String, f32> =
-        std::collections::HashMap::new();
+    console_log!("Vector results: {:?}", vector_results);
 
-    for (_vector_id, score, metadata) in vector_results {
-        doc_matches
-            .entry(metadata.document_id.clone())
-            .or_default()
-            .push((score, metadata.chunk_id));
-
-        // Update the document's best score if this is higher
-        let current_best = doc_best_scores.entry(metadata.document_id).or_insert(0.0);
-        if score > *current_best {
-            *current_best = score;
+    let mut sorted_docs = vec![];
+    let mut doc_tracker = std::collections::HashSet::new();
+    for (vector_id, _score) in vector_results {
+        let parts = vector_id.split("-").collect::<Vec<_>>();
+        let document_id = parts[0..parts.len() - 1].join("-");
+        if !doc_tracker.contains(&document_id) {
+            doc_tracker.insert(document_id.clone());
+            sorted_docs.push(document_id);
+        }
+        if sorted_docs.len() >= 5 {
+            break;
         }
     }
 
-    // Sort documents by their best score
-    let mut sorted_docs: Vec<_> = doc_best_scores.into_iter().collect();
-    sorted_docs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
     let mut return_val = Vec::new();
 
-    for (doc_id, _) in sorted_docs.iter().take(5) {
+    for doc_id in sorted_docs.iter().take(5) {
         match d1::get_link_by_id(&env, doc_id).await? {
             Some(link_info) => {
-                // Sort the chunks by score (highest first)
-                let mut chunks = doc_matches.get(doc_id).unwrap().clone();
-                chunks.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-                let chunk_list = chunks
-                    .iter()
-                    .map(|(_, chunk_id)| *chunk_id) // +1 for 1-indexed display
-                    .collect::<Vec<_>>();
-                return_val.push((link_info, chunk_list));
+                return_val.push(link_info);
             }
             None => {
                 console_log!("Link not found, id: {}", doc_id);
