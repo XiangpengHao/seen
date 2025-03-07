@@ -51,18 +51,7 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
         embeddings.push(embedding);
     }
 
-    let bucket = env.bucket("SEEN_BUCKET")?;
-    let bytes = bucket
-        .get("vector_lite.bin")
-        .execute()
-        .await?
-        .ok_or(Error::from("Failed to get vector lite"))?;
-    let bytes = bytes
-        .body()
-        .ok_or(Error::from("Failed to get vector lite body"))?
-        .bytes()
-        .await?;
-    let mut vector_lite = vector_lite::VectorLite::<768>::from_bytes(&bytes);
+    let mut vector_lite = vector::get_vector_lite(env).await?;
 
     for (i, embedding) in embeddings.iter().enumerate() {
         let vector_id = format!("{}-{}", link_id, i);
@@ -73,14 +62,7 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
     // TODO: how to make sure these steps are atomic?
     d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
     d1::save_link_to_db(env, &row, &embeddings).await?;
-    bucket
-        .put("vector_lite.bin", vector_lite.to_bytes())
-        .execute()
-        .await?;
-    bucket
-        .put("vector_lite_index.bin", vector_lite.index().to_bytes())
-        .execute()
-        .await?;
+    vector::save_vector_lite(env, &vector_lite).await?;
 
     Ok(row)
 }
@@ -131,24 +113,21 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
         let doc_id_clone = doc_id.clone();
         async move {
             match d1::get_link_by_id(&env_clone, &doc_id_clone).await {
-                Ok(Some(link_info)) => Some(link_info),
+                Ok(Some(link_info)) => Ok(link_info),
                 Ok(None) => {
                     console_log!("Link not found, id: {}", doc_id_clone);
-                    None
+                    Err(Error::from(format!("Link {} not found", doc_id_clone)))
                 }
                 Err(e) => {
                     console_log!("Error fetching link {}: {:?}", doc_id_clone, e);
-                    None
+                    Err(e)
                 }
             }
         }
     });
 
     let results = futures_util::future::join_all(link_futures).await;
-    let return_val: Vec<DocInfo> = results
-        .into_iter()
-        .map(|v| v.ok_or(Error::from("Failed to get link info")))
-        .collect::<Result<Vec<DocInfo>>>()?;
+    let return_val: Vec<DocInfo> = results.into_iter().collect::<Result<Vec<DocInfo>>>()?;
 
     Ok(return_val)
 }
@@ -157,15 +136,18 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
 pub async fn delete_link(env: &Env, link: &str) -> Result<DocInfo> {
     console_log!("Deleting link: {}", link);
 
-    let link_info = d1::delete_link_by_url(env, link).await?;
+    let link_info = d1::delete_link_and_embedding_by_url(env, link).await?;
 
+    let mut vector_lite = vector::get_vector_lite(env).await?;
     for i in 0..link_info.chunk_count {
-        d1::delete_embeddings(env, &format!("{}-{}", link_info.id, i)).await?;
+        let vector_id = format!("{}-{}", link_info.id, i);
+        vector_lite.delete_by_id(&vector_id);
     }
 
     d1::delete_from_bucket(env, &link_info.bucket_path).await?;
 
     vector::delete_vectors_by_prefix(env, &link_info.id, link_info.chunk_count).await?;
+    vector::save_vector_lite(env, &vector_lite).await?;
 
     console_log!(
         "Successfully deleted link and all associated data: {}",

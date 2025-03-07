@@ -161,28 +161,37 @@ pub async fn query_vectors_with_scores(
         .collect())
 }
 
+pub async fn get_vector_lite(env: &Env) -> Result<vector_lite::VectorLite<768>> {
+    let bucket = env.bucket("SEEN_BUCKET")?;
+    let bytes = bucket
+        .get("vector_lite.bin")
+        .execute()
+        .await?
+        .ok_or(Error::from("Failed to get vector lite"))?;
+    let bytes = bytes
+        .body()
+        .ok_or(Error::from("Failed to get vector lite body"))?
+        .bytes()
+        .await?;
+    Ok(vector_lite::VectorLite::<768>::from_bytes(&bytes))
+}
+
+pub async fn save_vector_lite(env: &Env, vector_lite: &vector_lite::VectorLite<768>) -> Result<()> {
+    let bucket = env.bucket("SEEN_BUCKET")?;
+    bucket
+        .put("vector_lite.bin", vector_lite.to_bytes())
+        .execute()
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn query_vectors_with_scores_vector_lite(
     env: &Env,
     query_text: &str,
     top_k: usize,
 ) -> Result<Vec<(String, f32)>> {
     let (query_vector, vector_lite) =
-        futures_util::join!(generate_embeddings(env, query_text), async {
-            let bucket = env.bucket("SEEN_BUCKET")?;
-            let bytes = bucket
-                .get("vector_lite.bin")
-                .execute()
-                .await?
-                .ok_or(Error::from("Failed to get vector lite"))?;
-            let bytes = bytes
-                .body()
-                .ok_or(Error::from("Failed to get vector lite body"))?
-                .bytes()
-                .await?;
-            Ok::<vector_lite::VectorLite<768>, Error>(vector_lite::VectorLite::<768>::from_bytes(
-                &bytes,
-            ))
-        });
+        futures_util::join!(generate_embeddings(env, query_text), get_vector_lite(env));
 
     let query_vector = query_vector?;
     let vector_lite = vector_lite?;

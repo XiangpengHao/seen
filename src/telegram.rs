@@ -60,6 +60,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
 /list - Show link statistics
 /search <query> - Search through saved links
 /delete <url> - Delete a saved link
+/delete_vector <id> - Delete a vector by id
 /upgrade - Upgrade vector index
 Or simply send a URL to save it, or any text to search for it.",
         )
@@ -72,8 +73,16 @@ Or simply send a URL to save it, or any text to search for it.",
             ),
             Err(e) => format!("Error upgrading vector index: {}", e),
         },
-        _ if text.starts_with("/insert") => {
-            let url = &text[7..].trim();
+        _ if text.starts_with("/delete_vector ") => {
+            let id = &text[15..].trim();
+            if id.is_empty() {
+                "Please provide a vector id to delete, e.g., '/delete_vector 123'".to_string()
+            } else {
+                delete_vector(env, id).await
+            }
+        }
+        _ if text.starts_with("/insert ") => {
+            let url = &text[8..].trim();
             if url.is_empty() {
                 "Please provide a URL to insert, e.g., '/insert https://example.com'".to_string()
             } else {
@@ -114,6 +123,18 @@ Or simply send a URL to save it, or any text to search for it.",
     send_message(&token, chat_id, response.as_str()).await?;
 
     Ok(())
+}
+
+pub async fn delete_vector(env: Env, id: &str) -> String {
+    vector::delete_vectors_by_prefix(&env, id, 10)
+        .await
+        .unwrap();
+    let mut vector_lite = vector::get_vector_lite(&env).await.unwrap();
+    for i in 0..10 {
+        vector_lite.delete_by_id(&format!("{}-{}", id, i));
+    }
+    vector::save_vector_lite(&env, &vector_lite).await.unwrap();
+    "Vector deleted".to_string()
 }
 
 pub async fn upgrade_vector_index(env: Env) -> Result<(usize, usize)> {

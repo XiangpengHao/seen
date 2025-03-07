@@ -16,14 +16,6 @@ pub struct DocInfo {
     pub chunk_count: usize,
 }
 
-pub async fn delete_embeddings(env: &Env, vec_id: &str) -> Result<()> {
-    let d1 = env.d1("SEEN_DB")?;
-    let stmt = d1.prepare("DELETE FROM embeddings WHERE vector_id = ?");
-    let stmt = stmt.bind(&[JsValue::from_str(vec_id)])?;
-    stmt.run().await?;
-    Ok(())
-}
-
 /// Retrieves link statistics from the database
 /// Returns the total number of links and the details of the latest 10 links
 pub async fn get_link_stats(env: Env) -> Result<(u64, Vec<DocInfo>)> {
@@ -145,18 +137,25 @@ pub async fn find_link_by_url(env: &Env, url: &str) -> Result<DocInfo> {
 }
 
 /// Delete a link from the database by URL
-pub async fn delete_link_by_url(env: &Env, url: &str) -> Result<DocInfo> {
-    // First, get the link info to return it later and for deletion references
+pub async fn delete_link_and_embedding_by_url(env: &Env, url: &str) -> Result<DocInfo> {
     let link_info = find_link_by_url(env, url).await?;
 
-    // Delete the link from the database
     let db = env.d1("SEEN_DB")?;
 
-    let _delete_result = db
-        .prepare("DELETE FROM links WHERE url = ?")
-        .bind(&[url.into()])?
-        .run()
-        .await?;
+    let mut statements = vec![];
+
+    for i in 0..link_info.chunk_count {
+        let vector_id = format!("{}-{}", link_info.id, i);
+        let delete_stmt = db.prepare("DELETE FROM embeddings WHERE vector_id = ?");
+        let delete_stmt = delete_stmt.bind(&[vector_id.into()])?;
+        statements.push(delete_stmt);
+    }
+    statements.push(
+        db.prepare("DELETE FROM links WHERE url = ?")
+            .bind(&[url.into()])?,
+    );
+
+    let _delete_result = db.batch(statements).await?;
 
     console_log!("Deleted link from database, URL: {}", url);
 
