@@ -125,18 +125,30 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
         }
     }
 
-    let mut return_val = Vec::new();
-
-    for doc_id in sorted_docs.iter().take(5) {
-        match d1::get_link_by_id(&env, doc_id).await? {
-            Some(link_info) => {
-                return_val.push(link_info);
-            }
-            None => {
-                console_log!("Link not found, id: {}", doc_id);
+    // Create a vector of futures for parallel execution
+    let link_futures = sorted_docs.iter().take(5).map(|doc_id| {
+        let env_clone = env.clone();
+        let doc_id_clone = doc_id.clone();
+        async move {
+            match d1::get_link_by_id(&env_clone, &doc_id_clone).await {
+                Ok(Some(link_info)) => Some(link_info),
+                Ok(None) => {
+                    console_log!("Link not found, id: {}", doc_id_clone);
+                    None
+                }
+                Err(e) => {
+                    console_log!("Error fetching link {}: {:?}", doc_id_clone, e);
+                    None
+                }
             }
         }
-    }
+    });
+
+    let results = futures_util::future::join_all(link_futures).await;
+    let return_val: Vec<DocInfo> = results
+        .into_iter()
+        .map(|v| v.ok_or(Error::from("Failed to get link info")))
+        .collect::<Result<Vec<DocInfo>>>()?;
 
     Ok(return_val)
 }

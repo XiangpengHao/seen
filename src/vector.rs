@@ -166,20 +166,26 @@ pub(crate) async fn query_vectors_with_scores_vector_lite(
     query_text: &str,
     top_k: usize,
 ) -> Result<Vec<(String, f32)>> {
-    let query_vector = generate_embeddings(env, query_text).await?;
+    let (query_vector, vector_lite) =
+        futures_util::join!(generate_embeddings(env, query_text), async {
+            let bucket = env.bucket("SEEN_BUCKET")?;
+            let bytes = bucket
+                .get("vector_lite.bin")
+                .execute()
+                .await?
+                .ok_or(Error::from("Failed to get vector lite"))?;
+            let bytes = bytes
+                .body()
+                .ok_or(Error::from("Failed to get vector lite body"))?
+                .bytes()
+                .await?;
+            Ok::<vector_lite::VectorLite<768>, Error>(vector_lite::VectorLite::<768>::from_bytes(
+                &bytes,
+            ))
+        });
 
-    let bucket = env.bucket("SEEN_BUCKET")?;
-    let bytes = bucket
-        .get("vector_lite.bin")
-        .execute()
-        .await?
-        .ok_or(Error::from("Failed to get vector lite"))?;
-    let bytes = bytes
-        .body()
-        .ok_or(Error::from("Failed to get vector lite body"))?
-        .bytes()
-        .await?;
-    let vector_lite = vector_lite::VectorLite::<768>::from_bytes(&bytes);
+    let query_vector = query_vector?;
+    let vector_lite = vector_lite?;
     let vector = Vector::try_from(query_vector).unwrap();
     let vectors = vector_lite
         .search_with_metric(&vector, top_k, vector_lite::ScoreMetric::Cosine)
