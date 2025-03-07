@@ -5,6 +5,7 @@ use crate::{
 };
 use serde_json::json;
 use vector_lite::ANNIndexOwned;
+use wasm_bindgen::JsValue;
 use worker::*;
 
 // Telegram API constants
@@ -59,6 +60,7 @@ pub async fn process_update(env: Env, update: Update) -> Result<()> {
 /list - Show link statistics
 /search <query> - Search through saved links
 /delete <url> - Delete a saved link
+/upgrade - Upgrade vector index
 Or simply send a URL to save it, or any text to search for it.",
         )
         .to_string(),
@@ -81,12 +83,20 @@ Or simply send a URL to save it, or any text to search for it.",
         _ if text.starts_with("http://") || text.starts_with("https://") => {
             insert_link(env, text).await
         }
+        _ if text.starts_with("/search cf ") => {
+            let query = &text[11..];
+            if query.trim().is_empty() {
+                "Please provide a search query, e.g., '/search cf cloudflare'".to_string()
+            } else {
+                search_query(env, query, true).await
+            }
+        }
         _ if text.starts_with("/search ") => {
             let query = &text[8..];
             if query.trim().is_empty() {
                 "Please provide a search query, e.g., '/search cloudflare'".to_string()
             } else {
-                search_query(env, query).await
+                search_query(env, query, false).await
             }
         }
         _ if text.starts_with("/delete ") => {
@@ -97,7 +107,7 @@ Or simply send a URL to save it, or any text to search for it.",
                 delete_link(env, url).await
             }
         }
-        _ => search_query(env, text).await,
+        _ => search_query(env, text, false).await,
     };
 
     // Send the response back to the user
@@ -109,8 +119,22 @@ Or simply send a URL to save it, or any text to search for it.",
 pub async fn upgrade_vector_index(env: Env) -> Result<(usize, usize)> {
     let mut index = match read_from_bucket(&env, "vector_lite.bin").await {
         Ok(existing) => vector_lite::VectorLite::<768>::from_bytes(&existing),
-        Err(_e) => vector_lite::VectorLite::<768>::new(3, 30),
+        Err(_e) => vector_lite::VectorLite::<768>::new(4, 20),
     };
+
+    // Create embedding table if it doesn't exist
+    let db = env.d1("SEEN_DB")?;
+    let create_table_stmt = db.prepare(
+        "
+        CREATE TABLE IF NOT EXISTS embeddings (
+            vector_id TEXT PRIMARY KEY,
+            vector BLOB NOT NULL,
+            link_id TEXT NOT NULL,
+            FOREIGN KEY (link_id) REFERENCES links(id)
+        )
+    ",
+    );
+    create_table_stmt.run().await?;
 
     let links = crate::d1::get_all_links(&env).await?;
 
@@ -128,17 +152,40 @@ pub async fn upgrade_vector_index(env: Env) -> Result<(usize, usize)> {
 
     let new_ids = ids.iter().skip(index.len()).collect::<Vec<_>>();
     // Get vectors in batches of 20
-    for chunk in new_ids.chunks(20).take(30) {
+    for chunk in new_ids.chunks(20).take(15) {
         let chunk_as_str: Vec<&str> = chunk.iter().map(|s| s.as_str()).collect();
         let chunk_vectors = vector::get_vector_by_id(&env, &chunk_as_str).await?;
         migrated += chunk.len();
 
         for (id, vector) in chunk.into_iter().zip(chunk_vectors) {
+            // Insert into database
+            // Parse the ID to get link_id and chunk_index
+            let parts: Vec<&str> = id.split('-').collect();
+            let link_id = parts[0..parts.len() - 1].join("-");
+
+            // Insert or replace the vector in the database
+            let stmt = db
+                .prepare(
+                    "
+                    INSERT OR REPLACE INTO embeddings (vector_id, vector, link_id)
+                    VALUES (?, ?, ?)
+                ",
+                )
+                .bind(&[
+                    (*id).into(),
+                    JsValue::from(js_sys::Float32Array::from(vector.as_slice().as_ref())),
+                    link_id.into(),
+                ])?;
+
+            stmt.run().await?;
+
             index.insert(vector, id.to_string());
         }
     }
+
     let bytes = index.to_bytes();
     save_to_bucket(&env, "vector_lite.bin", bytes).await?;
+
     Ok((total_ids, migrated))
 }
 
@@ -217,8 +264,8 @@ async fn list_links(env: Env) -> String {
     }
 }
 
-async fn search_query(env: Env, query: &str) -> String {
-    let result = crate::handlers::search_links(env, query).await;
+async fn search_query(env: Env, query: &str, search_from_cf: bool) -> String {
+    let result = crate::handlers::search_links(env, query, search_from_cf).await;
     match result {
         Ok(response) => {
             let mut ret = format!("🔍 Search results for '{}'\n\n", query);

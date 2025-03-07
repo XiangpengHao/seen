@@ -16,6 +16,14 @@ pub struct DocInfo {
     pub chunk_count: usize,
 }
 
+pub async fn delete_embeddings(env: &Env, vec_id: &str) -> Result<()> {
+    let d1 = env.d1("SEEN_DB")?;
+    let stmt = d1.prepare("DELETE FROM embeddings WHERE vector_id = ?");
+    let stmt = stmt.bind(&[JsValue::from_str(vec_id)])?;
+    stmt.run().await?;
+    Ok(())
+}
+
 /// Retrieves link statistics from the database
 /// Returns the total number of links and the details of the latest 10 links
 pub async fn get_link_stats(env: Env) -> Result<(u64, Vec<DocInfo>)> {
@@ -77,26 +85,42 @@ pub async fn read_from_bucket(env: &Env, bucket_path: &str) -> Result<Vec<u8>> {
     Ok(bytes.to_vec())
 }
 
-/// Save link metadata to database
-pub async fn save_link_to_db(env: &Env, row: &DocInfo) -> Result<()> {
+/// Save link metadata and embeddings to database
+pub async fn save_link_to_db(env: &Env, row: &DocInfo, embeddings: &Vec<Vec<f32>>) -> Result<()> {
     let d1 = env.d1("SEEN_DB")?;
 
-    // Insert with bucket path and content type
+    let mut statements = vec![];
+
     let stmt = d1
-        .prepare("INSERT INTO links (id, url, created_at, bucket_path, content_type, size, title, summary, chunk_count) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)")
-        .bind(&[
+            .prepare("INSERT INTO links (id, url, created_at, bucket_path, content_type, size, title, summary, chunk_count) VALUES (?, ?, datetime('now'), ?, ?, ?, ?, ?, ?)")
+            .bind(&[
+                JsValue::from_str(&row.id),
+                JsValue::from_str(&row.url),
+                JsValue::from_str(&row.bucket_path),
+                JsValue::from_str(&row.content_type),
+                JsValue::from_f64(row.size as f64),
+                JsValue::from_str(&row.title),
+                JsValue::from_str(&row.summary),
+                JsValue::from_f64(row.chunk_count as f64),
+        ])?;
+    statements.push(stmt);
+
+    // Insert embeddings
+    for (i, embedding) in embeddings.iter().enumerate() {
+        let vec_id = format!("{}-{}", row.id, i);
+
+        let embed_stmt =
+            d1.prepare("INSERT INTO embeddings (vector_id, vector, link_id) VALUES (?, ?, ?)");
+        let embed_stmt = embed_stmt.bind(&[
+            JsValue::from_str(&vec_id),
+            JsValue::from(js_sys::Float32Array::from(embedding.as_slice().as_ref())),
             JsValue::from_str(&row.id),
-            JsValue::from_str(&row.url),
-            JsValue::from_str(&row.bucket_path),
-            JsValue::from_str(&row.content_type),
-            JsValue::from_f64(row.size as f64),
-            JsValue::from_str(&row.title),
-            JsValue::from_str(&row.summary),
-            JsValue::from_f64(row.chunk_count as f64),
         ])?;
 
-    // Execute query
-    stmt.run().await?;
+        statements.push(embed_stmt);
+    }
+    let _result = d1.batch(statements).await?;
+
     Ok(())
 }
 

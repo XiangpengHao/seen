@@ -82,7 +82,7 @@ async fn generate_embedding_attempt(
 }
 
 /// Inserts a vector into the Vectorize index
-pub async fn insert_vector(env: &Env, id: &str, values: Vec<f32>) -> Result<()> {
+pub async fn insert_vector(env: &Env, id: &str, values: &Vec<f32>) -> Result<()> {
     let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
     let api_token = env.secret(CF_API_TOKEN)?.to_string();
 
@@ -99,7 +99,23 @@ pub async fn insert_vector(env: &Env, id: &str, values: Vec<f32>) -> Result<()> 
 
     let ndjson = serde_json::to_string(&vector_obj)?;
 
-    let _response = post_request(&url_endpoint, &api_token, &ndjson).await?;
+    let mut headers = Headers::new();
+    headers.set("Authorization", &format!("Bearer {}", api_token))?;
+    headers.set("Content-Type", "application/x-ndjson")?;
+
+    let mut init = RequestInit::new();
+    init.with_method(Method::Post)
+        .with_headers(headers)
+        .with_body(Some(wasm_bindgen::JsValue::from_str(&ndjson)));
+
+    let request = Request::new_with_init(&url_endpoint, &init)?;
+    let mut response = Fetch::Request(request).send().await?;
+
+    if response.status_code() != 200 {
+        let error_text = response.text().await?;
+        console_error!("Failed to insert vector: {}", error_text);
+        return Err(Error::from("Failed to insert vector"));
+    }
 
     console_log!("Vector inserted successfully for link ID: {}", id);
     Ok(())
@@ -165,7 +181,11 @@ pub(crate) async fn query_vectors_with_scores_vector_lite(
         .await?;
     let vector_lite = vector_lite::VectorLite::<768>::from_bytes(&bytes);
     let vector = Vector::try_from(query_vector).unwrap();
-    let vectors = vector_lite.search(&vector, top_k);
+    let vectors = vector_lite
+        .search(&vector, top_k)
+        .into_iter()
+        .map(|(id, score)| (id.to_string(), 1.0 / (1.0 + score)))
+        .collect();
 
     Ok(vectors)
 }

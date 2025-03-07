@@ -3,6 +3,7 @@ use crate::models::Update;
 use crate::utils::{chunk_and_summary_link, fetch_content, get_extension_from_content_type};
 use crate::vector;
 use uuid::Uuid;
+use vector_lite::{ANNIndexOwned, Vector};
 use worker::*;
 
 /// Handle the webhook request from Telegram
@@ -50,14 +51,37 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
         embeddings.push(embedding);
     }
 
-    for (i, embedding) in embeddings.into_iter().enumerate() {
+    let bucket = env.bucket("SEEN_BUCKET")?;
+    let bytes = bucket
+        .get("vector_lite.bin")
+        .execute()
+        .await?
+        .ok_or(Error::from("Failed to get vector lite"))?;
+    let bytes = bytes
+        .body()
+        .ok_or(Error::from("Failed to get vector lite body"))?
+        .bytes()
+        .await?;
+    let mut vector_lite = vector_lite::VectorLite::<768>::from_bytes(&bytes);
+
+    for (i, embedding) in embeddings.iter().enumerate() {
         let vector_id = format!("{}-{}", link_id, i);
         vector::insert_vector(env, &vector_id, embedding).await?;
+        vector_lite.insert(Vector::try_from(embedding.clone()).unwrap(), vector_id);
     }
 
     // TODO: how to make sure these steps are atomic?
     d1::save_to_bucket(env, &bucket_path, content.clone()).await?;
-    d1::save_link_to_db(env, &row).await?;
+    d1::save_link_to_db(env, &row, &embeddings).await?;
+    bucket
+        .put("vector_lite.bin", vector_lite.to_bytes())
+        .execute()
+        .await?;
+    bucket
+        .put("vector_lite_index.bin", vector_lite.index().to_bytes())
+        .execute()
+        .await?;
+
     Ok(row)
 }
 
@@ -69,12 +93,15 @@ fn get_bucket_path(content_type: &str, link_id: &str) -> String {
 
 /// Search links using vector similarity
 /// Returns a list of links and their chunks
-pub async fn search_links(env: Env, query: &str) -> Result<Vec<DocInfo>> {
+pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result<Vec<DocInfo>> {
     console_log!("Searching for: {}", query);
 
     // Query the vector database to get vector IDs and scores
-    // let mut vector_results = vector::query_vectors_with_scores(&env, query, 20).await?;
-    let mut vector_results = vector::query_vectors_with_scores_vector_lite(&env, query, 20).await?;
+    let mut vector_results = if search_from_cf {
+        vector::query_vectors_with_scores(&env, query, 20).await?
+    } else {
+        vector::query_vectors_with_scores_vector_lite(&env, query, 20).await?
+    };
 
     if vector_results.is_empty() {
         return Ok(vec![]);
@@ -119,6 +146,10 @@ pub async fn delete_link(env: &Env, link: &str) -> Result<DocInfo> {
     console_log!("Deleting link: {}", link);
 
     let link_info = d1::delete_link_by_url(env, link).await?;
+
+    for i in 0..link_info.chunk_count {
+        d1::delete_embeddings(env, &format!("{}-{}", link_info.id, i)).await?;
+    }
 
     d1::delete_from_bucket(env, &link_info.bucket_path).await?;
 

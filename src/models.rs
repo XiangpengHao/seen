@@ -102,5 +102,4 @@ pub struct VectorGetResponse {
 #[derive(Deserialize)]
 pub struct VectorGetResult {
     pub values: Vec<f32>,
-    pub id: String,
 }
