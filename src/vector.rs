@@ -182,9 +182,8 @@ pub(crate) async fn query_vectors_with_scores_vector_lite(
     let vector_lite = vector_lite::VectorLite::<768>::from_bytes(&bytes);
     let vector = Vector::try_from(query_vector).unwrap();
     let vectors = vector_lite
-        .search(&vector, top_k)
+        .search_with_metric(&vector, top_k, vector_lite::ScoreMetric::Cosine)
         .into_iter()
-        .map(|(id, score)| (id.to_string(), 1.0 / (1.0 + score)))
         .collect();
 
     Ok(vectors)
