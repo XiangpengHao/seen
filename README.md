@@ -16,6 +16,12 @@ Seen is a simple personal knowledge management tool made for impatient people li
 ## Demo
 ![demo](doc/demo.jpg)
 
+## Roadmap
+
+Seen is migrating to use [VectorLite](https://github.com/XiangpengHao/vector-lite) as its vector database, allowing lower latency and more reliable service. 
+
+As the natural next step, we will offer a hosted version of Seen.
+
 ## Hosted service
 Let me know if you are interested in a hosted version of Seen.
 
