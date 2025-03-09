@@ -290,13 +290,14 @@ async fn search_query(env: Env, query: &str, search_from_cf: bool) -> String {
     match result {
         Ok(response) => {
             let mut ret = format!("🔍 Search results for '{}'\n\n", query);
-            for (i, link_info) in response.into_iter().enumerate() {
+            for (i, (link_info, score)) in response.into_iter().enumerate() {
                 ret.push_str(&format!(
-                    "<b>{}.</b> {} <a href=\"{}\">{}</a>\n\n",
+                    "<b>{}.</b> {} <a href=\"{}\">{}</a> ({:.2})\n\n",
                     i + 1,
                     crate::telegram::format_type_emoji(&link_info.content_type),
                     link_info.url,
                     html_escape::encode_text(&link_info.title),
+                    score,
                 ));
             }
             ret

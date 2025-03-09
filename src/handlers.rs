@@ -75,7 +75,11 @@ fn get_bucket_path(content_type: &str, link_id: &str) -> String {
 
 /// Search links using vector similarity
 /// Returns a list of links and their chunks
-pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result<Vec<DocInfo>> {
+pub async fn search_links(
+    env: Env,
+    query: &str,
+    search_from_cf: bool,
+) -> Result<Vec<(DocInfo, f32)>> {
     console_log!("Searching for: {}", query);
 
     // Query the vector database to get vector IDs and scores
@@ -95,12 +99,12 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
 
     let mut sorted_docs = vec![];
     let mut doc_tracker = std::collections::HashSet::new();
-    for (vector_id, _score) in vector_results {
+    for (vector_id, score) in vector_results {
         let parts = vector_id.split("-").collect::<Vec<_>>();
         let document_id = parts[0..parts.len() - 1].join("-");
         if !doc_tracker.contains(&document_id) {
             doc_tracker.insert(document_id.clone());
-            sorted_docs.push(document_id);
+            sorted_docs.push((document_id, score));
         }
         if sorted_docs.len() >= 5 {
             break;
@@ -108,12 +112,12 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
     }
 
     // Create a vector of futures for parallel execution
-    let link_futures = sorted_docs.iter().take(5).map(|doc_id| {
+    let link_futures = sorted_docs.iter().take(5).map(|(doc_id, score)| {
         let env_clone = env.clone();
         let doc_id_clone = doc_id.clone();
         async move {
             match d1::get_link_by_id(&env_clone, &doc_id_clone).await {
-                Ok(Some(link_info)) => Ok(link_info),
+                Ok(Some(link_info)) => Ok((link_info, *score)),
                 Ok(None) => {
                     console_log!("Link not found, id: {}", doc_id_clone);
                     Err(Error::from(format!("Link {} not found", doc_id_clone)))
@@ -127,7 +131,9 @@ pub async fn search_links(env: Env, query: &str, search_from_cf: bool) -> Result
     });
 
     let results = futures_util::future::join_all(link_futures).await;
-    let return_val: Vec<DocInfo> = results.into_iter().collect::<Result<Vec<DocInfo>>>()?;
+    let return_val: Vec<(DocInfo, f32)> = results
+        .into_iter()
+        .collect::<Result<Vec<(DocInfo, f32)>>>()?;
 
     Ok(return_val)
 }
