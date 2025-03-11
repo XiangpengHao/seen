@@ -81,46 +81,6 @@ async fn generate_embedding_attempt(
     Ok(embedding_response.result.data[0].clone())
 }
 
-/// Inserts a vector into the Vectorize index
-pub async fn insert_vector(env: &Env, id: &str, values: &Vec<f32>) -> Result<()> {
-    let account_id = env.secret(CF_ACCOUNT_ID)?.to_string();
-    let api_token = env.secret(CF_API_TOKEN)?.to_string();
-
-    let url_endpoint = format!(
-        "https://api.cloudflare.com/client/v4/accounts/{}/vectorize/v2/indexes/{}/insert",
-        account_id, VECTORIZE_INDEX_NAME
-    );
-
-    // Create a vector object in JSON format
-    let vector_obj = json!({
-        "id": id.to_string(),
-        "values": values,
-    });
-
-    let ndjson = serde_json::to_string(&vector_obj)?;
-
-    let mut headers = Headers::new();
-    headers.set("Authorization", &format!("Bearer {}", api_token))?;
-    headers.set("Content-Type", "application/x-ndjson")?;
-
-    let mut init = RequestInit::new();
-    init.with_method(Method::Post)
-        .with_headers(headers)
-        .with_body(Some(wasm_bindgen::JsValue::from_str(&ndjson)));
-
-    let request = Request::new_with_init(&url_endpoint, &init)?;
-    let mut response = Fetch::Request(request).send().await?;
-
-    if response.status_code() != 200 {
-        let error_text = response.text().await?;
-        console_error!("Failed to insert vector: {}", error_text);
-        return Err(Error::from("Failed to insert vector"));
-    }
-
-    console_log!("Vector inserted successfully for link ID: {}", id);
-    Ok(())
-}
-
 /// Queries the Vectorize index for similar vectors and returns IDs, scores, and metadata
 pub async fn query_vectors_with_scores(
     env: &Env,

@@ -55,7 +55,6 @@ pub async fn insert_link(env: &Env, link: &str) -> Result<DocInfo> {
 
     for (i, embedding) in embeddings.iter().enumerate() {
         let vector_id = format!("{}-{}", link_id, i);
-        vector::insert_vector(env, &vector_id, embedding).await?;
         vector_lite.insert(Vector::try_from(embedding.clone()).unwrap(), vector_id);
     }
 
