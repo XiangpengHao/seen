@@ -81,7 +81,7 @@ async fn gemini_api_request(
                 },
                 {
                     "role": "user",
-                    "parts": [{"text": "Continue processing where you left off. Focus on completing the chunks array."}]
+                    "parts": [{"text": "Continue"}]
                 }
             ],
         })
@@ -160,11 +160,10 @@ pub async fn chunk_and_summary_link(
     content_type: &str,
 ) -> Result<ProcessedLinkData> {
     let initial_prompt =
-        "Convert the following content into Markdown. Tables should be formatted as markdown tables. \
+        "OCR the following content into Markdown without any html tags. Tables should be formatted as markdown tables. \
         Figures should be described in the text, text in the figures should be extracted. \
         Do not surround your output with triple backticks. \
-        If the content is HTML, convert it to markdown, remove all HTML tags.\
-        Chunk the markdown content into sections of roughly 1000 tokens, each chunk should have roughly the same semantic (suitable for embedding). \
+        Chunk the markdown content into sections of roughly 2000 tokens, each chunk should have roughly the same semantic (suitable for embedding). \
         These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
         You should generate a two sentence summary of the document, dense and concise brief, output in the summary field.\n\n\
         You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n";
