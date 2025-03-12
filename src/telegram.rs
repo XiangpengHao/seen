@@ -258,7 +258,11 @@ async fn insert_link(env: Env, url: &str) -> String {
         }
         Err(e) => {
             console_error!("Error handling link: {}, error: {}", url, e);
-            format!("Error handling link: {}, error: {}", url, e)
+            format!(
+                "Error handling link: {}, error: {}",
+                url,
+                html_escape::encode_text(&e.to_string())
+            )
         }
     }
 }

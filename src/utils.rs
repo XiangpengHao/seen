@@ -44,9 +44,10 @@ pub fn get_extension_from_content_type(content_type: &str) -> &'static str {
 async fn gemini_api_request(
     env: &Env,
     prompt: &str,
-    inline_content: Option<(&str, &[u8])>,
+    inline_content: (&str, &[u8]),
     response_schema: Option<serde_json::Value>,
-) -> Result<String> {
+    previous_response: Option<&str>,
+) -> Result<(String, bool)> {
     let api_key = env.secret("GEMINI_API_KEY")?.to_string();
     let api_url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={}",
@@ -59,22 +60,39 @@ async fn gemini_api_request(
     })];
 
     // Add binary content if provided
-    if let Some((mime_type, data)) = inline_content {
-        parts.push(serde_json::json!({
-            "inline_data": {
-                "mime_type": mime_type,
-                "data": STANDARD.encode(data)
-            }
-        }));
-    }
+    parts.push(serde_json::json!({
+        "inline_data": {
+            "mime_type": inline_content.0,
+            "data": STANDARD.encode(inline_content.1)
+        }
+    }));
 
-    // Create the request payload
-    let mut payload = serde_json::json!({
-        "contents": [{
-            "role": "user",
-            "parts": parts
-        }],
-    });
+    // Create the request payload with conversation structure if there's a previous response
+    let mut payload = if let Some(prev_response) = previous_response {
+        serde_json::json!({
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": parts
+                },
+                {
+                    "role": "model",
+                    "parts": [{"text": prev_response}]
+                },
+                {
+                    "role": "user",
+                    "parts": [{"text": "Continue processing where you left off. Focus on completing the chunks array."}]
+                }
+            ],
+        })
+    } else {
+        serde_json::json!({
+            "contents": [{
+                "role": "user",
+                "parts": parts
+            }],
+        })
+    };
 
     if let Some(response_schema) = response_schema {
         payload["generationConfig"] = serde_json::json!({
@@ -111,8 +129,17 @@ async fn gemini_api_request(
 
     console_log!("Gemini API response: {}", result);
 
+    // Check if the response was truncated due to token limits
+    let was_truncated = result
+        .get("candidates")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("finishReason"))
+        .and_then(|f| f.as_str())
+        .map(|reason| reason == "MAX_TOKENS")
+        .unwrap_or(false);
+
     // Extract the text
-    result
+    let text = result
         .get("candidates")
         .and_then(|c| c.get(0))
         .and_then(|c| c.get("content"))
@@ -121,7 +148,9 @@ async fn gemini_api_request(
         .and_then(|p| p.get("text"))
         .and_then(|t| t.as_str())
         .map(|s| s.to_string())
-        .ok_or_else(|| Error::from("Failed to parse Gemini API response"))
+        .ok_or_else(|| Error::from("Failed to parse Gemini API response"))?;
+
+    Ok((text, was_truncated))
 }
 
 /// Process a link with Gemini API and return structured data
@@ -130,18 +159,15 @@ pub async fn chunk_and_summary_link(
     content: &[u8],
     content_type: &str,
 ) -> Result<ProcessedLinkData> {
-    let prompt =
+    let initial_prompt =
         "Convert the following content into Markdown. Tables should be formatted as markdown tables. \
         Figures should be described in the text, text in the figures should be extracted. \
         Do not surround your output with triple backticks. \
-        Chunk the markdown content into sections of roughly 1000 tokens. Our goal is to identify parts of the page with same semantic theme. \
-        If the markdown content is larger than 8000 tokens, you should summarize the chunks so that the total number of output tokens is less than 8000. \
-        If the markdown content is smaller than 8000 tokens, you should not summarize the chunks, and keep the converted content as is. \
+        If the content is HTML, convert it to markdown, remove all HTML tags.\
+        Chunk the markdown content into sections of roughly 1000 tokens, each chunk should have roughly the same semantic (suitable for embedding). \
         These chunks will be embedded and used in a RAG pipeline. Output in the chunks field, as array.\n\n\
-        You should generate a two sentence summary of the document, with dense and concise brief, \
-        output in the summary field.\n\n\
-        You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n"
-        ;
+        You should generate a two sentence summary of the document, dense and concise brief, output in the summary field.\n\n\
+        You should extract the original title of the document, and if not present, you should generate one based on the content. output in the title field.\n\n";
 
     let schema = serde_json::json!({
         "type": "object",
@@ -166,12 +192,52 @@ pub async fn chunk_and_summary_link(
         ]
     });
 
-    // Pass the content to Gemini API
-    let response_text =
-        gemini_api_request(env, prompt, Some((content_type, content)), Some(schema)).await?;
+    // Make the initial request
+    let (mut response_text, mut was_truncated) = gemini_api_request(
+        env,
+        initial_prompt,
+        (content_type, content),
+        Some(schema.clone()),
+        None,
+    )
+    .await?;
 
-    // Parse the response into our structured type
-    let data: ProcessedLinkData = serde_json::from_str(&response_text).map_err(|e| {
+    // If the response was truncated, keep sending follow-up requests until we get the complete output
+    if was_truncated {
+        let mut attempt = 1;
+        let max_attempts = 10; // Prevent infinite loops
+
+        while was_truncated && attempt < max_attempts {
+            console_log!(
+                "Gemini API response was truncated, making follow-up request (attempt {})",
+                attempt
+            );
+
+            // Make a follow-up request using the conversation approach
+            let (continued_text, still_truncated) = gemini_api_request(
+                env,
+                initial_prompt,
+                (content_type, content),
+                Some(schema.clone()),
+                Some(&response_text),
+            )
+            .await?;
+
+            // Append the new text to our accumulated response
+            // Note: We're just keeping everything as a string until we're done
+            response_text.push_str(&continued_text);
+            was_truncated = still_truncated;
+
+            attempt += 1;
+        }
+
+        if attempt >= max_attempts && was_truncated {
+            console_log!("Warning: Reached maximum follow-up attempts, document may be incomplete");
+        }
+    }
+
+    // Now that we have the complete (or as complete as possible) response, try to parse it
+    let data = serde_json::from_str::<ProcessedLinkData>(&response_text).map_err(|e| {
         Error::from(format!(
             "Failed to parse Gemini response into structured data: {}, response: {}",
             e, response_text
